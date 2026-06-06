@@ -1,0 +1,17 @@
+# Rust
+/agentd/target/
+**/*.rs.bk
+# Cargo.lock is tracked — agentd is a binary workspace (reproducible builds matter)
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Secrets / local config overrides
+*.local.toml
+.env
+.claude/
