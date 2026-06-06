@@ -27,7 +27,7 @@ plans/            Architecture docs and handoff package
 ~~1.~~ ✓ `core` — types + unit-tested `state.apply()` (6 tests, 0 failures)
 ~~2.~~ ✓ Bus + trivial echo frontend — end-to-end WS round-trip proven (2 integration tests)
 ~~3.~~ ✓ Plugin supervisor — MCP-over-stdio, CerebroCortex wired (66 tools, recall tested)
-4. Agent turn engine — streaming, thinking-block retention, semaphore
+~~4.~~ ✓ Agent turn engine — Provider trait, SSE streaming, thinking-block retention, semaphore, bus wiring (6 tests)
 5. Policy engine — modes, rules, approval-as-event
 6. Sub-agent routing — `parent` field + routing + cancellation cascade
 

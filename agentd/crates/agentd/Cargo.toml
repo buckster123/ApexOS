@@ -11,5 +11,6 @@ path = "src/main.rs"
 apexos-core    = { path = "../core" }
 apexos-gateway = { path = "../gateway" }
 apexos-plugins = { path = "../plugins" }
+apexos-agent   = { path = "../agent" }
 tokio          = { workspace = true }
 anyhow         = { workspace = true }
