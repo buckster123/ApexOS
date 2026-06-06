@@ -115,8 +115,8 @@ impl Supervisor {
 
     /// Dispatch a tool call immediately (policy already checked).
     fn dispatch_tool(&self, session: SessionId, call: ToolCall) {
-        // Virtual tool: agent.spawn is handled by the async router, not an MCP plugin.
-        if call.tool == "agent.spawn" {
+        // Virtual tool: agent_spawn is handled by the async router, not an MCP plugin.
+        if call.tool == "agent_spawn" {
             let prompt  = call.args["prompt"].as_str().unwrap_or("").to_owned();
             let system  = call.args["system"].as_str().map(str::to_owned);
             let bus     = self.bus.clone();

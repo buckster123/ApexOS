@@ -1,0 +1,18 @@
+# /etc/agentd/plugins.toml  — Pi 5 production config
+#
+# cerebro-mcp installed system-wide via: sudo pip3 install cerebro-cortex[all] --break-system-packages
+# Data lives in /var/lib/agentd/cerebro (writable by agentd user).
+
+[[plugin]]
+id      = "cerebro"
+cmd     = "cerebro-mcp"
+args    = []
+restart = "always"
+[plugin.env]
+CEREBRO_DATA_DIR = "/var/lib/agentd/cerebro"
+
+# shell and fs plugins — add when the MCP implementations exist
+# [[plugin]]
+# id      = "shell"
+# cmd     = "/usr/lib/agentd/plugins/shell-mcp"
+# restart = "on-failure"

@@ -29,7 +29,8 @@ plans/            Architecture docs and handoff package
 ~~3.~~ ✓ Plugin supervisor — MCP-over-stdio, CerebroCortex wired (66 tools, recall tested)
 ~~4.~~ ✓ Agent turn engine — Provider trait, SSE streaming, thinking-block retention, semaphore, bus wiring (6 tests)
 ~~5.~~ ✓ Policy engine — suggest/auto-edit/yolo × per-tool rules, ApprovalPending/UserApproval flow (12 tests)
-~~6.~~ ✓ Sub-agent routing — agent.spawn virtual tool, child→parent ToolResult routing, cascade cancel (3 tests)
+~~6.~~ ✓ Sub-agent routing — agent_spawn virtual tool, child→parent ToolResult routing, cascade cancel (3 tests)
+~~7.~~ ✓ Pi deploy — agentd running on Pi 5, CerebroCortex 0.5.1 in venv, full WS round-trip smoke-tested
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
@@ -61,10 +62,13 @@ In production on Pi: declared in `agentd/config/plugins.toml`.
 Agent ID for this dev session: **CLAUDE-APEX**
 
 ## Pi 5 target
-- RaspiOS Lite (no desktop), NVMe for workspace + event log
-- `agentd` user (unprivileged), cage kiosk on tty1 for local KVM display
-- First-session checklist in `plans/agentos-handoff/README.md`
+- Debian trixie (not RaspiOS), NVMe `/dev/sda2` 458GB for workspace + event log
+- `agentd` user (unprivileged), cage kiosk on tty1 for local KVM display (deferred)
 - SSH: `ssh apexos@192.168.0.114` — password `abnudc1337` (local LAN only)
+- `ANTHROPIC_API_KEY` in `/etc/agentd/env` (chmod 600, root-owned)
+- CerebroCortex 0.5.1 installed in `/opt/cerebro-venv`; wrapper at `/usr/local/bin/cerebro-mcp`
+- Always build on Pi (`~/.cargo/bin/cargo build --release`) — do NOT scp x86 binaries
+- Pi data: `/var/lib/agentd/{workspace,events,cerebro}`
 
 ## Docs
 Sub-specialization docs in `docs/claude/`. Load the relevant one when entering

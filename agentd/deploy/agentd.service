@@ -5,19 +5,21 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/agentd --config /etc/agentd
+ExecStart=/usr/local/bin/agentd
 Restart=on-failure
 RestartSec=2
 
-# Run as a dedicated unprivileged user — the agent can do a lot via tools,
-# so the daemon itself should not be root. Tool reach is governed by policy.toml,
-# not by process privilege.
 User=agentd
 Group=agentd
 
+# Config paths (explicit on Pi, env var overrides)
+Environment=AGENTD_PLUGINS_TOML=/etc/agentd/plugins.toml
+Environment=AGENTD_POLICY_TOML=/etc/agentd/policy.toml
 # Workspace on the NVMe (event log + working files live here).
 Environment=AGENTD_WORKSPACE=/var/lib/agentd/workspace
 Environment=AGENTD_LOG=/var/lib/agentd/events
+# ANTHROPIC_API_KEY lives in /etc/agentd/env — not checked into source
+EnvironmentFile=-/etc/agentd/env
 
 # Hardening (relax only as specific tools require it).
 NoNewPrivileges=true

@@ -243,7 +243,7 @@ async fn gather_tools(
 
 fn agent_spawn_spec() -> ToolSpec {
     ToolSpec {
-        name:        "agent.spawn".into(),
+        name:        "agent_spawn".into(),
         description: "Spawn a focused sub-agent to handle a sub-task. \
                       Returns the sub-agent's final text output.".into(),
         input_schema: serde_json::json!({
@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn agent_spawn_spec_has_required_prompt() {
         let spec = agent_spawn_spec();
-        assert_eq!(spec.name, "agent.spawn");
+        assert_eq!(spec.name, "agent_spawn");
         let required = spec.input_schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("prompt")));
     }
