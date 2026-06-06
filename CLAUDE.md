@@ -35,6 +35,7 @@ ui/               Frontend — index.html + style.css + app.js (served by axum S
 ~~8.~~ ✓ Event log — `store` crate, JSONL per day to `AGENTD_LOG`, date-roll, lag-safe (2 tests)
 ~~9.~~ ✓ Frontend UI — vanilla HTML/CSS/JS in `ui/`; custom `tokio::fs` handler (ServeDir fails in `ProtectSystem=strict`); terminal aesthetic, boot animation, streaming text, collapsible tool calls, inline approval UX; API key entry dialogue
 ~~10.~~ ✓ Cage kiosk — seatd backend, `agentos-kiosk` user (video group), `cage-kiosk.service` auto-starts; Wayland socket live; headless-safe (3 retries then stops)
+~~11.~~ ✓ Frontend controls — cancel (Esc), power modal (reboot/shutdown + 3s countdown), model selector (live Arc swap), policy badge, new session (Ctrl+K + localStorage history), timestamps, collapse-all tools
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
