@@ -24,7 +24,7 @@ plans/            Architecture docs and handoff package
 ```
 
 ## Build order (each step independently testable)
-1. `core` — types + unit-tested `state.apply()` → see `docs/reference/state_apply.rs`
+~~1.~~ ✓ `core` — types + unit-tested `state.apply()` (6 tests, 0 failures)
 2. Bus + trivial echo frontend — prove event flow end to end
 3. Plugin supervisor against real CerebroCortex — **top-tier item**
 4. Agent turn engine — streaming, thinking-block retention, semaphore
@@ -62,6 +62,7 @@ Agent ID for this dev session: **CLAUDE-APEX**
 - RaspiOS Lite (no desktop), NVMe for workspace + event log
 - `agentd` user (unprivileged), cage kiosk on tty1 for local KVM display
 - First-session checklist in `plans/agentos-handoff/README.md`
+- SSH: `ssh apexos@192.168.0.114` — password `abnudc1337` (local LAN only)
 
 ## Docs
 Sub-specialization docs in `docs/claude/`. Load the relevant one when entering
