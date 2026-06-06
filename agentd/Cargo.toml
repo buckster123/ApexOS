@@ -1,9 +1,14 @@
 [workspace]
 members = [
     "crates/core",
+    "crates/gateway",
+    "crates/agentd",
 ]
 resolver = "2"
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
+serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio      = { version = "1", features = ["full"] }
+anyhow     = "1"
+futures-util = "0.3"

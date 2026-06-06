@@ -25,7 +25,7 @@ plans/            Architecture docs and handoff package
 
 ## Build order (each step independently testable)
 ~~1.~~ ✓ `core` — types + unit-tested `state.apply()` (6 tests, 0 failures)
-2. Bus + trivial echo frontend — prove event flow end to end
+~~2.~~ ✓ Bus + trivial echo frontend — end-to-end WS round-trip proven (2 integration tests)
 3. Plugin supervisor against real CerebroCortex — **top-tier item**
 4. Agent turn engine — streaming, thinking-block retention, semaphore
 5. Policy engine — modes, rules, approval-as-event

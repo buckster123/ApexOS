@@ -1,0 +1,14 @@
+[package]
+name = "agentd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "agentd"
+path = "src/main.rs"
+
+[dependencies]
+apexos-core    = { path = "../core" }
+apexos-gateway = { path = "../gateway" }
+tokio          = { workspace = true }
+anyhow         = { workspace = true }
