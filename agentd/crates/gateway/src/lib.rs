@@ -17,10 +17,12 @@ use apexos_core::{BusHandle, Event};
 
 #[derive(Clone)]
 pub struct GatewayState {
-    pub bus:     BusHandle,
-    pub bcast:   broadcast::Sender<Event>,
-    pub api_key: Arc<RwLock<String>>,
-    pub ui_dir:  PathBuf,
+    pub bus:         BusHandle,
+    pub bcast:       broadcast::Sender<Event>,
+    pub api_key:     Arc<RwLock<String>>,
+    pub model:       Arc<RwLock<String>>,
+    pub policy_mode: String,
+    pub ui_dir:      PathBuf,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -28,6 +30,8 @@ pub fn router(state: GatewayState) -> Router {
         .route("/ws",           get(ws_handler))
         .route("/api/status",   get(status_handler))
         .route("/api/key",      post(set_key_handler))
+        .route("/api/model",    get(get_model_handler).post(set_model_handler))
+        .route("/api/power",    post(power_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -87,7 +91,6 @@ async fn static_handler(
     let path = uri.path().trim_start_matches('/');
     let file_name = if path.is_empty() { "index.html" } else { path };
 
-    // Only serve the three known UI files — no path traversal possible.
     let content_type: &'static str = match file_name {
         "index.html"  => "text/html; charset=utf-8",
         "style.css"   => "text/css; charset=utf-8",
@@ -112,8 +115,13 @@ async fn static_handler(
 // ── API routes ────────────────────────────────────────────────────────────────
 
 async fn status_handler(State(state): State<GatewayState>) -> impl IntoResponse {
-    let set = !state.api_key.read().await.is_empty();
-    Json(serde_json::json!({ "api_key_set": set }))
+    let key_set = !state.api_key.read().await.is_empty();
+    let model   = state.model.read().await.clone();
+    Json(serde_json::json!({
+        "api_key_set":  key_set,
+        "model":        model,
+        "policy_mode":  state.policy_mode,
+    }))
 }
 
 async fn set_key_handler(
@@ -131,6 +139,48 @@ async fn set_key_handler(
     let _ = tokio::fs::write(&persist_path, &key).await;
 
     Json(serde_json::json!({ "ok": true }))
+}
+
+async fn get_model_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let model = state.model.read().await.clone();
+    Json(serde_json::json!({ "model": model }))
+}
+
+async fn set_model_handler(
+    State(state): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let model = body["model"].as_str().unwrap_or("").trim().to_string();
+    if model.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "empty model" }));
+    }
+    *state.model.write().await = model;
+    Json(serde_json::json!({ "ok": true }))
+}
+
+async fn power_handler(
+    State(_): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let action = body["action"].as_str().unwrap_or("");
+    let cmd = match action {
+        "reboot"   => "reboot",
+        "shutdown" => "poweroff",
+        _ => return Json(serde_json::json!({ "ok": false, "error": "unknown action" })),
+    };
+    match tokio::process::Command::new("sudo")
+        .args(["systemctl", cmd])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => Json(serde_json::json!({ "ok": true })),
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr).to_string();
+            eprintln!("[gateway] power/{cmd}: {err}");
+            Json(serde_json::json!({ "ok": false, "error": err }))
+        }
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    }
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

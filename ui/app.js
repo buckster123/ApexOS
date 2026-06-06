@@ -1,14 +1,22 @@
 // ─── Config ──────────────────────────────────────────────────────────────────
 const WS_URL     = `ws://${location.host}/ws`;
-const SESSION_ID = Math.floor(Math.random() * 2 ** 32);
 const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000];
 
+const MODELS = [
+  { id: 'claude-opus-4-8',   label: 'OPUS 4.8'    },
+  { id: 'claude-opus-4-7',   label: 'OPUS 4.7'    },
+  { id: 'claude-sonnet-4-6', label: 'SONNET 4.6'  },
+  { id: 'claude-haiku-4-5',  label: 'HAIKU 4.5'   },
+];
+
 // ─── State ───────────────────────────────────────────────────────────────────
+let SESSION_ID   = Math.floor(Math.random() * 2 ** 32);
 let ws           = null;
 let reconnectIdx = 0;
 let reconnTimer  = null;
 let activeTurn   = null;   // { turnEl, agentBlock, cursor }
 let bootDone     = false;
+let sessionTurns = [];     // { ts, user, agent } — saved on new session
 
 // ─── Boot sequence ────────────────────────────────────────────────────────────
 const LOGO = [
@@ -135,8 +143,6 @@ function sendWs(obj) {
 
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
-  // Session-specific events: only handle events for our session.
-  // Plugin events (no session field) always pass through.
   if (ev.session !== undefined && ev.session !== SESSION_ID) return;
 
   switch (ev.type) {
@@ -176,9 +182,15 @@ function onAgentText(ev) {
 
 function onTurnComplete() {
   if (activeTurn) {
+    // Snapshot agent text for session history
+    const agentText = activeTurn.agentBlock.textContent.replace(/\s*$/, '');
+    if (sessionTurns.length > 0) {
+      sessionTurns[sessionTurns.length - 1].agent = agentText;
+    }
     activeTurn.cursor.remove();
     activeTurn = null;
   }
+  setCancelVisible(false);
   if (bootDone && ws?.readyState === WebSocket.OPEN) enableInput(true);
   scrollDown();
 }
@@ -187,7 +199,6 @@ function onTurnComplete() {
 function onToolRequested(ev) {
   const t   = ensureActiveTurn();
   const div = makeToolCallEl(ev.call.id, ev.call.tool, ev.call.input);
-  // Append to the turn (sibling of agentBlock) so it appears inline in flow.
   t.turnEl.appendChild(div);
   scrollDown();
 }
@@ -230,14 +241,12 @@ function onToolResult(ev) {
   const callEl = document.querySelector(`.tool-call[data-id="${ev.call}"]`);
   if (!callEl) return;
 
-  // Update status indicator
   const statusEl = callEl.querySelector('.tool-status');
   if (statusEl) {
     statusEl.className = `tool-status ${ev.output.ok ? 'ok' : 'err'}`;
     statusEl.textContent = ev.output.ok ? '✓' : '✗';
   }
 
-  // Append result to body and auto-expand
   const body = callEl.querySelector('.tool-body');
   if (!body) return;
 
@@ -245,11 +254,9 @@ function onToolResult(ev) {
   resultEl.className = `tool-result${ev.output.ok ? '' : ' err'}`;
   const content = ev.output.content;
   const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-  // Truncate very long results; user can expand the raw log later
   resultEl.textContent = text.length > 400 ? text.slice(0, 400) + '\n…' : text;
   body.appendChild(resultEl);
 
-  // Auto-open so result is visible
   body.classList.add('open');
   const toggle = callEl.querySelector('.tool-toggle');
   if (toggle) toggle.textContent = '▾';
@@ -314,7 +321,6 @@ function onPluginUp(ev) {
     updateBootLine(lines, 'PLUGIN SUPERVISOR', 'ok');
     addBootLine(lines, `  ${ev.plugin.toUpperCase()}`,
                 `${pluginCounts[ev.plugin]} tools registered`, 'ok');
-    // Give a beat for the user to read the boot log, then transition.
     setTimeout(transitionToApp, 1200);
   } else {
     showSysMsg(`plugin ${ev.plugin} online  (${pluginCounts[ev.plugin]} tools)`);
@@ -332,6 +338,149 @@ function refreshToolCount() {
   document.getElementById('hdr-center').textContent = total ? `${total} tools` : '';
 }
 
+// ─── Cancel ───────────────────────────────────────────────────────────────────
+function cancelTurn() {
+  if (!activeTurn) return;
+  sendWs({ type: 'user_cancel', session: SESSION_ID });
+  showSysMsg('cancelled');
+}
+
+function setCancelVisible(on) {
+  const cancel = document.getElementById('cancel-btn');
+  const send   = document.getElementById('send-btn');
+  cancel.classList.toggle('hidden', !on);
+  send.classList.toggle('hidden',  on);
+}
+
+// ─── New session ──────────────────────────────────────────────────────────────
+function newSession() {
+  // Save current session turns to localStorage before clearing
+  if (sessionTurns.length > 0) {
+    try {
+      const history = JSON.parse(localStorage.getItem('apexos_history') || '[]');
+      history.push({ ts: Date.now(), turns: sessionTurns });
+      if (history.length > 10) history.shift();
+      localStorage.setItem('apexos_history', JSON.stringify(history));
+    } catch { /* storage full or unavailable */ }
+  }
+
+  SESSION_ID   = Math.floor(Math.random() * 2 ** 32);
+  sessionTurns = [];
+  if (activeTurn) { activeTurn.cursor.remove(); activeTurn = null; }
+  setCancelVisible(false);
+
+  document.getElementById('output').innerHTML = '';
+  showSysMsg(`new session  ${SESSION_ID.toString(16).toUpperCase()}`);
+  enableInput(ws?.readyState === WebSocket.OPEN);
+}
+
+// ─── History ──────────────────────────────────────────────────────────────────
+function showHistory() {
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem('apexos_history') || '[]'); } catch {}
+
+  const content = document.getElementById('history-content');
+  content.innerHTML = '';
+
+  if (history.length === 0) {
+    content.innerHTML = '<div class="history-empty">No saved sessions yet.</div>';
+  } else {
+    // Show most recent session first
+    const last = history[history.length - 1];
+    const date = new Date(last.ts);
+    const heading = document.createElement('div');
+    heading.className = 'history-date';
+    heading.textContent = date.toLocaleString();
+    content.appendChild(heading);
+
+    for (const turn of last.turns) {
+      if (turn.user) {
+        const u = document.createElement('div');
+        u.className = 'history-user';
+        u.textContent = turn.user;
+        content.appendChild(u);
+      }
+      if (turn.agent) {
+        const a = document.createElement('div');
+        a.className = 'history-agent';
+        a.textContent = turn.agent.length > 400
+          ? turn.agent.slice(0, 400) + '…'
+          : turn.agent;
+        content.appendChild(a);
+      }
+    }
+  }
+
+  document.getElementById('history-modal').classList.remove('hidden');
+}
+
+// ─── Power modal ──────────────────────────────────────────────────────────────
+let powerCountdownTimer = null;
+
+function showPowerModal() {
+  document.getElementById('power-modal').classList.remove('hidden');
+  document.getElementById('power-countdown').classList.add('hidden');
+}
+
+function hidePowerModal() {
+  if (powerCountdownTimer) { clearInterval(powerCountdownTimer); powerCountdownTimer = null; }
+  document.getElementById('power-modal').classList.add('hidden');
+}
+
+function triggerPower(action) {
+  const countdown = document.getElementById('power-countdown');
+  const btns      = document.getElementById('power-modal-btns');
+  btns.classList.add('hidden');
+  countdown.classList.remove('hidden');
+
+  let secs = 3;
+  const label = action === 'reboot' ? 'REBOOTING' : 'SHUTTING DOWN';
+  countdown.textContent = `${label} in ${secs}...`;
+
+  powerCountdownTimer = setInterval(() => {
+    secs--;
+    if (secs > 0) {
+      countdown.textContent = `${label} in ${secs}...`;
+    } else {
+      clearInterval(powerCountdownTimer);
+      powerCountdownTimer = null;
+      countdown.textContent = `${label}...`;
+      fetch('/api/power', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify({ action }),
+      }).catch(() => {});
+    }
+  }, 1000);
+}
+
+// ─── Model selector ───────────────────────────────────────────────────────────
+async function initModelSelector(currentModel) {
+  const sel = document.getElementById('model-select');
+  if (currentModel) {
+    // Set selector to match server-reported model; add unknown model if needed
+    const known = MODELS.find(m => m.id === currentModel);
+    if (!known) {
+      const opt = document.createElement('option');
+      opt.value = currentModel;
+      opt.textContent = currentModel.toUpperCase();
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    sel.value = currentModel;
+  }
+
+  sel.addEventListener('change', async () => {
+    const model = sel.value;
+    try {
+      await fetch('/api/model', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify({ model }),
+      });
+    } catch { /* offline */ }
+  });
+}
+
 // ─── Sending prompts ──────────────────────────────────────────────────────────
 function sendPrompt() {
   const input = document.getElementById('prompt-input');
@@ -340,14 +489,18 @@ function sendPrompt() {
 
   input.value = '';
   enableInput(false);
+  setCancelVisible(true);
 
-  // Build turn with user line + empty agent block
+  // Track for session history
+  sessionTurns.push({ ts: Date.now(), user: text, agent: '' });
+
   const output     = document.getElementById('output');
   const turnEl     = document.createElement('div');
   turnEl.className = 'turn';
 
   const userLine = document.createElement('div');
   userLine.className   = 'user-line';
+  userLine.dataset.time = timestamp();
   userLine.textContent = text;
   turnEl.appendChild(userLine);
 
@@ -375,8 +528,14 @@ function enableInput(on) {
 }
 
 function setStatus(cls, label) {
-  document.getElementById('ws-dot').className   = cls;
+  document.getElementById('ws-dot').className    = cls;
   document.getElementById('ws-label').textContent = label;
+}
+
+function setPolicyBadge(mode) {
+  const badge = document.getElementById('policy-badge');
+  badge.textContent = mode || '';
+  badge.className   = `policy-badge policy-${(mode || '').toLowerCase().replace(/[^a-z]/g, '')}`;
 }
 
 function scrollDown() {
@@ -392,6 +551,11 @@ function showSysMsg(text) {
   scrollDown();
 }
 
+function timestamp() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
 function esc(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -405,12 +569,16 @@ async function checkAndMaybePromptKey() {
   try {
     const res  = await fetch('/api/status');
     const data = await res.json();
-    if (data.api_key_set) return; // all good
+
+    // Apply server-reported state
+    if (data.model)       initModelSelector(data.model);
+    if (data.policy_mode) setPolicyBadge(data.policy_mode);
+
+    if (data.api_key_set) return;
   } catch {
-    return; // can't reach status endpoint — offline, keep going
+    return;
   }
 
-  // Key missing — show the form and wait for it to be submitted
   const form   = document.getElementById('key-form');
   const input  = document.getElementById('key-input');
   const submit = document.getElementById('key-submit');
@@ -426,7 +594,7 @@ async function checkAndMaybePromptKey() {
       const key = input.value.trim();
       if (!key) { showKeyError('Key cannot be empty.'); return; }
 
-      submit.disabled   = true;
+      submit.disabled    = true;
       submit.textContent = 'SAVING...';
       errEl.classList.add('hidden');
 
@@ -446,12 +614,12 @@ async function checkAndMaybePromptKey() {
           resolve();
         } else {
           showKeyError(data.error || 'Failed to save key.');
-          submit.disabled   = false;
+          submit.disabled    = false;
           submit.textContent = 'CONNECT';
         }
       } catch {
         showKeyError('Could not reach agentd — is it running?');
-        submit.disabled   = false;
+        submit.disabled    = false;
         submit.textContent = 'CONNECT';
       }
     }
@@ -468,18 +636,82 @@ async function checkAndMaybePromptKey() {
   });
 }
 
+// ─── Collapse all tools ───────────────────────────────────────────────────────
+function collapseAllTools() {
+  const open = document.querySelectorAll('.tool-body.open');
+  if (open.length > 0) {
+    open.forEach(b => {
+      b.classList.remove('open');
+      const toggle = b.previousElementSibling?.querySelector('.tool-toggle');
+      if (toggle) toggle.textContent = '▸';
+    });
+  } else {
+    document.querySelectorAll('.tool-body').forEach(b => {
+      b.classList.add('open');
+      const toggle = b.previousElementSibling?.querySelector('.tool-toggle');
+      if (toggle) toggle.textContent = '▾';
+    });
+  }
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Send / input bar
   document.getElementById('send-btn').addEventListener('click', sendPrompt);
   document.getElementById('prompt-input').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+  });
+
+  // Cancel
+  document.getElementById('cancel-btn').addEventListener('click', cancelTurn);
+
+  // New session
+  document.getElementById('new-session-btn').addEventListener('click', newSession);
+
+  // Power modal
+  document.getElementById('power-btn').addEventListener('click', showPowerModal);
+  document.getElementById('power-dismiss-btn').addEventListener('click', hidePowerModal);
+  document.getElementById('power-reboot-btn').addEventListener('click', () => triggerPower('reboot'));
+  document.getElementById('power-shutdown-btn').addEventListener('click', () => triggerPower('shutdown'));
+  document.getElementById('power-modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('power-modal')) hidePowerModal();
+  });
+
+  // History: double-click the logo or click hdr-center
+  document.getElementById('hdr-logo').addEventListener('dblclick', showHistory);
+  document.getElementById('history-close-btn').addEventListener('click', () => {
+    document.getElementById('history-modal').classList.add('hidden');
+  });
+  document.getElementById('history-modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('history-modal')) {
+      document.getElementById('history-modal').classList.add('hidden');
+    }
+  });
+
+  // Collapse all tools on hdr-center click (also shows tool count)
+  document.getElementById('hdr-center').addEventListener('click', collapseAllTools);
+
+  // Global keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (!document.getElementById('power-modal').classList.contains('hidden')) {
+        hidePowerModal(); return;
+      }
+      if (!document.getElementById('history-modal').classList.contains('hidden')) {
+        document.getElementById('history-modal').classList.add('hidden'); return;
+      }
+      if (activeTurn) { cancelTurn(); return; }
+    }
+    if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      newSession();
+    }
   });
 
   runBoot()
     .then(checkAndMaybePromptKey)
     .then(() => {
       connect();
-      // Failsafe: enter app even if WS never gets a plugin_up
       setTimeout(transitionToApp, 4000);
     });
 });

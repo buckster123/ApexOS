@@ -33,12 +33,24 @@ async fn main() -> anyhow::Result<()> {
     let (bus, handle, bcast) = Bus::new(SystemState::default());
     tokio::spawn(bus.run());
 
-    // Shared API key — readable/writable from both the turn engine and browser UI
+    // Shared API key + model — readable/writable from both the turn engine and browser UI
     let api_key_str = load_api_key();
     if api_key_str.is_empty() {
         eprintln!("[agentd] ANTHROPIC_API_KEY not set — enter via browser UI at :8787");
     }
     let api_key_arc = Arc::new(RwLock::new(api_key_str));
+    let model_arc   = Arc::new(RwLock::new("claude-opus-4-8".to_string()));
+
+    // Load policy config early so gateway can expose the mode.
+    let policy_path = PathBuf::from(
+        std::env::var("AGENTD_POLICY_TOML")
+            .unwrap_or_else(|_| "config/policy.toml".into())
+    );
+    let policy_config = match PolicyConfig::load(&policy_path) {
+        Ok(c)  => { eprintln!("[agentd] policy mode: {:?}", c.mode); c }
+        Err(e) => { eprintln!("[agentd] policy config: {e} — using defaults"); PolicyConfig::default() }
+    };
+    let policy_mode_str = format!("{:?}", policy_config.mode).to_uppercase();
 
     // Gateway
     let ui_dir = PathBuf::from(
@@ -46,9 +58,11 @@ async fn main() -> anyhow::Result<()> {
     );
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
-        bus:     handle.clone(),
-        bcast:   bcast.clone(),
-        api_key: Arc::clone(&api_key_arc),
+        bus:         handle.clone(),
+        bcast:       bcast.clone(),
+        api_key:     Arc::clone(&api_key_arc),
+        model:       Arc::clone(&model_arc),
+        policy_mode: policy_mode_str,
         ui_dir,
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
@@ -68,24 +82,15 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => { eprintln!("[agentd] plugins config: {e}"); vec![] }
     };
 
-    // Policy engine
-    let policy_path = PathBuf::from(
-        std::env::var("AGENTD_POLICY_TOML")
-            .unwrap_or_else(|_| "config/policy.toml".into())
-    );
-    let policy_config = match PolicyConfig::load(&policy_path) {
-        Ok(c)  => { eprintln!("[agentd] policy mode: {:?}", c.mode); c }
-        Err(e) => { eprintln!("[agentd] policy config: {e} — using defaults"); PolicyConfig::default() }
-    };
     let max_depth = policy_config.subagents.max_depth;
     let policy    = PolicyEngine::new(policy_config);
 
     let supervisor = Supervisor::new(handle.clone(), policy);
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
-    // Agent turn engine — shares the same key Arc so browser UI updates take effect immediately
+    // Agent turn engine — shares key + model Arcs so browser UI changes take effect immediately
     let engine: Arc<TurnEngine> = Arc::new(TurnEngine::new(
-        AnthropicProvider::new_shared(Arc::clone(&api_key_arc), "claude-opus-4-8"),
+        AnthropicProvider::new_shared(Arc::clone(&api_key_arc), Arc::clone(&model_arc)),
         16,
         None,
     ));

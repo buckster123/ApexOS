@@ -60,7 +60,12 @@ mkdir -p /opt/cerebro-venv
 
 chown -R agentd:agentd /var/lib/agentd
 chmod 750 /etc/agentd
-ok "directories ready"
+
+# Allow agentd to trigger system reboot/shutdown via the browser power button
+echo 'agentd ALL=(ALL) NOPASSWD: /bin/systemctl reboot, /bin/systemctl poweroff' \
+    > /etc/sudoers.d/agentd-power
+chmod 440 /etc/sudoers.d/agentd-power
+ok "directories and sudoers ready"
 
 # ── 3. Rust toolchain (for agentd user and install user) ────────────────────
 echo "── 3/8  Rust toolchain"
