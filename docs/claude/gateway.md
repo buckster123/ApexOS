@@ -8,8 +8,11 @@
 - [x] State stream: broadcast::Receiver → WebSocket send loop
 - [x] Multiple simultaneous connections supported
 - [x] Static UI files served via custom tokio::fs handler (GET /, /style.css, /app.js)
-- [x] GET /api/status — returns `{"api_key_set": bool}`
+- [x] GET /api/status — returns `{"api_key_set": bool, "model": str, "policy_mode": str}`
 - [x] POST /api/key — updates shared api_key Arc<RwLock<String>>, persists to /var/lib/agentd/.api_key
+- [x] GET /api/model — returns current model
+- [x] POST /api/model — updates shared model Arc<RwLock<String>> (live, no restart)
+- [x] POST /api/power — `{"action": "reboot"|"shutdown"}` → sudo systemctl
 
 ## Protocol
 Stateless by design — the gateway holds NO authoritative state.
@@ -22,6 +25,8 @@ Stateless by design — the gateway holds NO authoritative state.
 | `bus` | `BusHandle` | emit inbound intents onto the bus |
 | `bcast` | `broadcast::Sender<Event>` | subscribe for outbound events |
 | `api_key` | `Arc<RwLock<String>>` | shared with AnthropicProvider; browser UI updates take effect immediately |
+| `model` | `Arc<RwLock<String>>` | shared with AnthropicProvider; model selector changes apply to next turn |
+| `policy_mode` | `String` | formatted from `PolicyConfig.mode` at startup; read-only in gateway |
 | `ui_dir` | `PathBuf` | resolved from `AGENTD_UI` env var; passed as state so the static handler can read from it |
 
 ## Static file serving
