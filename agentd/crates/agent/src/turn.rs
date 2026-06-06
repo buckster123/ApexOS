@@ -26,6 +26,16 @@ impl TurnEngine {
             system,
         }
     }
+
+    /// Derive an engine variant with a different system prompt.
+    /// Shares the same provider and semaphore so concurrency limits apply globally.
+    pub fn with_system(&self, system: Option<String>) -> Self {
+        Self {
+            provider: self.provider.clone(),
+            sem:      self.sem.clone(),
+            system,
+        }
+    }
 }
 
 /// Run one assistant turn (streaming + tool round-trips).

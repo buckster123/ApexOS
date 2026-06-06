@@ -40,6 +40,16 @@ pub enum Event {
     // ── from the policy engine ────────────────────────────
     ApprovalPending { session: SessionId, call: ToolCall },
 
+    // ── sub-agent routing ─────────────────────────────────
+    /// Emitted by the supervisor when agent.spawn is dispatched.
+    /// The async router catches this and creates a child run_turn.
+    SpawnAgent {
+        parent:  SessionId,
+        call_id: ActionId,
+        prompt:  String,
+        system:  Option<String>,
+    },
+
     // ── system ────────────────────────────────────────────
     Error { session: Option<SessionId>, message: String },
 }

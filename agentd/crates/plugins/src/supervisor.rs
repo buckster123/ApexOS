@@ -115,6 +115,18 @@ impl Supervisor {
 
     /// Dispatch a tool call immediately (policy already checked).
     fn dispatch_tool(&self, session: SessionId, call: ToolCall) {
+        // Virtual tool: agent.spawn is handled by the async router, not an MCP plugin.
+        if call.tool == "agent.spawn" {
+            let prompt  = call.args["prompt"].as_str().unwrap_or("").to_owned();
+            let system  = call.args["system"].as_str().map(str::to_owned);
+            let bus     = self.bus.clone();
+            let call_id = call.id;
+            tokio::spawn(async move {
+                bus.emit(Event::SpawnAgent { parent: session, call_id, prompt, system }).await;
+            });
+            return;
+        }
+
         let tool_name = call.tool.clone();
         if let Some(pid) = self.tool_registry.get(&tool_name).cloned() {
             if let Some(plugin) = self.plugins.get(&pid) {

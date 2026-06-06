@@ -29,7 +29,7 @@ plans/            Architecture docs and handoff package
 ~~3.~~ ✓ Plugin supervisor — MCP-over-stdio, CerebroCortex wired (66 tools, recall tested)
 ~~4.~~ ✓ Agent turn engine — Provider trait, SSE streaming, thinking-block retention, semaphore, bus wiring (6 tests)
 ~~5.~~ ✓ Policy engine — suggest/auto-edit/yolo × per-tool rules, ApprovalPending/UserApproval flow (12 tests)
-6. Sub-agent routing — `parent` field + routing + cancellation cascade
+~~6.~~ ✓ Sub-agent routing — agent.spawn virtual tool, child→parent ToolResult routing, cascade cancel (3 tests)
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)

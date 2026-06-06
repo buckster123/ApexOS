@@ -11,6 +11,7 @@ dependencies = [
  "apexos-core",
  "apexos-gateway",
  "apexos-plugins",
+ "serde_json",
  "tokio",
 ]
 

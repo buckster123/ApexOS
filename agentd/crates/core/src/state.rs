@@ -74,6 +74,9 @@ impl SystemState {
                 self.plugins.remove(plugin);
             }
 
+            // Routing signal handled by the async layer; state just records intent.
+            Event::SpawnAgent { .. } => {}
+
             Event::Error { .. } => {}
         }
     }
