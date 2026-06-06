@@ -5,6 +5,7 @@ use apexos_core::{
 use apexos_gateway::{serve, GatewayState};
 use apexos_plugins::{load as load_plugins, PolicyConfig, PolicyEngine, Supervisor};
 use apexos_agent::{AnthropicProvider, TurnEngine, run_turn};
+use apexos_store::run_log_writer;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,6 +75,12 @@ async fn main() -> anyhow::Result<()> {
     let agent_rx = bcast.subscribe();
     spawn_agent_router(agent_rx, bcast.clone(), handle.clone(),
                        tool_reg, histories, engine, max_depth);
+
+    // Event log
+    let log_dir = PathBuf::from(
+        std::env::var("AGENTD_LOG").unwrap_or_else(|_| "events".into())
+    );
+    tokio::spawn(run_log_writer(log_dir, bcast.subscribe()));
 
     eprintln!("[agentd] ready — gateway ws://0.0.0.0:8787/ws");
     tokio::signal::ctrl_c().await?;

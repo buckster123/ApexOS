@@ -15,7 +15,7 @@ agentd/           Cargo workspace (binary + 5 library crates)
     gateway/      axum WebSocket server — intents in, state out
     agent/        Turn engine: streaming, thinking-block retention, semaphore
     plugins/      MCP-over-stdio client + subprocess supervisor + registry
-    store/        Append-only event log to NVMe
+    store/        Append-only JSONL event log to NVMe (date-rolling files)
   config/         plugins.toml + policy.toml (examples, deployed to /etc/agentd/)
   deploy/         systemd units: agentd.service + cage-kiosk.service
 docs/reference/   Reference Rust snippets from the handoff package (read-only)
@@ -31,6 +31,7 @@ plans/            Architecture docs and handoff package
 ~~5.~~ ✓ Policy engine — suggest/auto-edit/yolo × per-tool rules, ApprovalPending/UserApproval flow (12 tests)
 ~~6.~~ ✓ Sub-agent routing — agent_spawn virtual tool, child→parent ToolResult routing, cascade cancel (3 tests)
 ~~7.~~ ✓ Pi deploy — agentd running on Pi 5, CerebroCortex 0.5.1 in venv, full WS round-trip smoke-tested
+~~8.~~ ✓ Event log — `store` crate, JSONL per day to `AGENTD_LOG`, date-roll, lag-safe (2 tests)
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)

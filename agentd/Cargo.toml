@@ -4,6 +4,7 @@ members = [
     "crates/gateway",
     "crates/plugins",
     "crates/agent",
+    "crates/store",
     "crates/agentd",
 ]
 resolver = "2"
