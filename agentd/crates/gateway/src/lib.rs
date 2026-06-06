@@ -4,7 +4,8 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -12,7 +13,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use tower_http::services::ServeDir;
 use apexos_core::{BusHandle, Event};
 
 #[derive(Clone)]
@@ -20,14 +20,15 @@ pub struct GatewayState {
     pub bus:     BusHandle,
     pub bcast:   broadcast::Sender<Event>,
     pub api_key: Arc<RwLock<String>>,
+    pub ui_dir:  PathBuf,
 }
 
-pub fn router(state: GatewayState, ui_dir: PathBuf) -> Router {
+pub fn router(state: GatewayState) -> Router {
     Router::new()
-        .route("/ws",       get(ws_handler))
-        .route("/api/status", get(status_handler))
-        .route("/api/key",    post(set_key_handler))
-        .fallback_service(ServeDir::new(ui_dir))
+        .route("/ws",           get(ws_handler))
+        .route("/api/status",   get(status_handler))
+        .route("/api/key",      post(set_key_handler))
+        .fallback(static_handler)
         .with_state(state)
 }
 
@@ -41,7 +42,6 @@ async fn ws_handler(
 }
 
 async fn handle_socket(socket: WebSocket, state: GatewayState) {
-    // Subscribe BEFORE spawning tasks so no events are missed.
     let mut rx = state.bcast.subscribe();
     let (mut sink, mut stream) = socket.split();
 
@@ -78,6 +78,37 @@ async fn handle_socket(socket: WebSocket, state: GatewayState) {
     }
 }
 
+// ── Static file handler ───────────────────────────────────────────────────────
+
+async fn static_handler(
+    State(state): State<GatewayState>,
+    uri: axum::http::Uri,
+) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let file_name = if path.is_empty() { "index.html" } else { path };
+
+    // Only serve the three known UI files — no path traversal possible.
+    let content_type: &'static str = match file_name {
+        "index.html"  => "text/html; charset=utf-8",
+        "style.css"   => "text/css; charset=utf-8",
+        "app.js"      => "application/javascript; charset=utf-8",
+        _             => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let full_path = state.ui_dir.join(file_name);
+    match tokio::fs::read(&full_path).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, content_type)],
+            bytes,
+        ).into_response(),
+        Err(e) => {
+            eprintln!("[gateway] static {file_name}: {e}");
+            StatusCode::NOT_FOUND.into_response()
+        }
+    }
+}
+
 // ── API routes ────────────────────────────────────────────────────────────────
 
 async fn status_handler(State(state): State<GatewayState>) -> impl IntoResponse {
@@ -95,7 +126,6 @@ async fn set_key_handler(
     }
     *state.api_key.write().await = key.clone();
 
-    // Best-effort persist to a file the agentd user can write.
     let persist_path = std::env::var("AGENTD_KEY_FILE")
         .unwrap_or_else(|_| "/var/lib/agentd/.api_key".into());
     let _ = tokio::fs::write(&persist_path, &key).await;
@@ -105,8 +135,8 @@ async fn set_key_handler(
 
 // ── serve ─────────────────────────────────────────────────────────────────────
 
-pub async fn serve(state: GatewayState, addr: SocketAddr, ui_dir: PathBuf) -> anyhow::Result<()> {
+pub async fn serve(state: GatewayState, addr: SocketAddr) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router(state, ui_dir)).await?;
+    axum::serve(listener, router(state)).await?;
     Ok(())
 }

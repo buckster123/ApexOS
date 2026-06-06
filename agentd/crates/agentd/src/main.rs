@@ -41,17 +41,19 @@ async fn main() -> anyhow::Result<()> {
     let api_key_arc = Arc::new(RwLock::new(api_key_str));
 
     // Gateway
+    let ui_dir = PathBuf::from(
+        std::env::var("AGENTD_UI").unwrap_or_else(|_| "ui".into())
+    );
+    eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
         bus:     handle.clone(),
         bcast:   bcast.clone(),
         api_key: Arc::clone(&api_key_arc),
+        ui_dir,
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
-    let ui_dir = PathBuf::from(
-        std::env::var("AGENTD_UI").unwrap_or_else(|_| "ui".into())
-    );
     tokio::spawn(async move {
-        if let Err(e) = serve(gw_state, gw_addr, ui_dir).await {
+        if let Err(e) = serve(gw_state, gw_addr).await {
             eprintln!("[gateway] error: {e}");
         }
     });

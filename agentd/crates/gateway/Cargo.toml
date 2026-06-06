@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 apexos-core  = { path = "../core" }
 axum         = { version = "0.8", features = ["ws"] }
-tower-http   = { version = "0.6", features = ["fs"] }
 tokio        = { workspace = true }
 serde_json   = { workspace = true }
 futures-util = { workspace = true }
