@@ -10,7 +10,7 @@
 - [x] `agentd` binary native-compiled on Pi, deployed to `/usr/local/bin/agentd`
 - [x] systemd unit installed, enabled, running
 - [x] `install.sh` bootstrap script in repo root
-- [ ] cage + webview for local KVM kiosk display (deferred)
+- [x] cage + chromium kiosk for local KVM display — seatd backend, `/run/cage-kiosk` runtime dir
 
 ## Hardware
 - Raspberry Pi 5 — Cortex-A76, 8GB RAM
@@ -69,7 +69,24 @@ sudo journalctl -u agentd -n 20 --no-pager
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-## Kiosk display (deferred)
-- `cage` (single-app Wayland compositor) + `chromium --kiosk http://localhost:8787`
-- `cage-kiosk.service` in `deploy/` — install after UI is built
-- Needs: `sudo apt install cage chromium`
+## Kiosk display
+
+### Setup (done by install.sh)
+- `sudo apt install cage chromium seatd`
+- `useradd --create-home --shell /bin/bash --user-group agentos-kiosk`
+- `usermod -aG video,render,input,tty agentos-kiosk`
+- Install `deploy/cage-kiosk.service` → `/etc/systemd/system/`
+- `systemctl enable cage-kiosk.service` (auto-starts at boot)
+
+### How it works
+- seatd socket: `/run/seatd.sock` — group `video`, mode 0770
+- agentos-kiosk is in `video` group → can connect to seatd
+- `LIBSEAT_BACKEND=seatd` forces cage to use seatd (not logind)
+- `RuntimeDirectory=cage-kiosk` → `/run/cage-kiosk/` owned by agentos-kiosk
+- cage creates Wayland socket `wayland-0` there; chromium renders into it
+- Headless (no monitor): cage still runs, no output; 3 failures → service stops
+
+### Pitfalls found
+- `PAMName=login` approach fails: logind doesn't propagate XDG_RUNTIME_DIR to the exec'd process, and `%U` in ExecStartPre=+ expands to 0 (root UID), not the service user
+- seatd socket group is `video` on Debian trixie (not `seat` or `_seatd`)
+- `StartLimitIntervalSec`/`StartLimitBurst` belong in `[Unit]`, not `[Service]`

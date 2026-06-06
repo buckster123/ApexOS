@@ -32,18 +32,19 @@ echo -e "${CYAN}╚════════════════════�
 echo ""
 
 # ── 1. system packages ───────────────────────────────────────────────────────
-echo "── 1/7  System packages"
+echo "── 1/8  System packages"
 apt-get update -qq
 apt-get install -y -qq \
     curl git build-essential pkg-config \
     libssl-dev libsqlite3-dev \
     python3 python3-pip python3-venv \
     tesseract-ocr \
+    cage chromium \
     2>/dev/null
 ok "system packages ready"
 
 # ── 2. agentd user + directories ─────────────────────────────────────────────
-echo "── 2/7  Users and directories"
+echo "── 2/8  Users and directories"
 
 if ! id agentd &>/dev/null; then
     useradd --system --no-create-home --shell /usr/sbin/nologin agentd
@@ -62,7 +63,7 @@ chmod 750 /etc/agentd
 ok "directories ready"
 
 # ── 3. Rust toolchain (for agentd user and install user) ────────────────────
-echo "── 3/7  Rust toolchain"
+echo "── 3/8  Rust toolchain"
 
 CARGO_HOME_PATH="/home/agentd/.cargo"
 RUSTUP_HOME_PATH="/home/agentd/.rustup"
@@ -85,7 +86,7 @@ RUST_VER=$($CARGO --version)
 ok "Rust ready: $RUST_VER"
 
 # ── 4. Build agentd ──────────────────────────────────────────────────────────
-echo "── 4/7  Build agentd (this takes ~2 min on Pi 5)"
+echo "── 4/8  Build agentd (this takes ~2 min on Pi 5)"
 
 cd "$REPO_DIR/agentd"
 sudo -u "$BUILD_USER" "$CARGO" build --release 2>&1 \
@@ -100,7 +101,7 @@ install -m 755 "$BINARY" /usr/local/bin/agentd
 ok "binary installed to /usr/local/bin/agentd"
 
 # ── 5. CerebroCortex in venv ─────────────────────────────────────────────────
-echo "── 5/7  CerebroCortex"
+echo "── 5/8  CerebroCortex"
 
 if [[ ! -x /opt/cerebro-venv/bin/cerebro-mcp ]]; then
     info "creating venv …"
@@ -148,7 +149,7 @@ chmod +x /usr/local/bin/cerebro-mcp
 ok "CerebroCortex ready ($(/opt/cerebro-venv/bin/cerebro-mcp --version 2>&1 | grep -oE 'v[0-9.]+' || echo 'installed'))"
 
 # ── 6. Config files ──────────────────────────────────────────────────────────
-echo "── 6/7  Configuration"
+echo "── 6/8  Configuration"
 
 # plugins.toml — use Pi-specific variant if present
 if [[ -f "$REPO_DIR/agentd/config/plugins.pi.toml" ]]; then
@@ -168,8 +169,31 @@ systemctl daemon-reload
 systemctl enable agentd
 ok "config and service installed"
 
-# ── 7. API key ───────────────────────────────────────────────────────────────
-echo "── 7/7  Anthropic API key"
+# ── 7. Cage kiosk (local KVM display) ────────────────────────────────────────
+echo "── 7/8  Cage kiosk user + service"
+
+if ! id agentos-kiosk &>/dev/null; then
+    useradd --create-home --shell /bin/bash --user-group agentos-kiosk
+    ok "created agentos-kiosk user"
+else
+    ok "agentos-kiosk user already exists"
+fi
+
+# DRM/input device access — logind (PAMName=login) handles ACLs, groups are fallback
+for GRP in video render input tty; do
+    if getent group "$GRP" &>/dev/null; then
+        usermod -aG "$GRP" agentos-kiosk
+    fi
+done
+ok "agentos-kiosk in video/render/input/tty groups"
+
+install -m 644 "$REPO_DIR/agentd/deploy/cage-kiosk.service" /etc/systemd/system/cage-kiosk.service
+systemctl daemon-reload
+systemctl enable cage-kiosk.service
+ok "cage-kiosk.service installed and enabled (starts at boot when monitor is attached)"
+
+# ── 8. API key ───────────────────────────────────────────────────────────────
+echo "── 8/8  Anthropic API key"
 
 if [[ ! -s /etc/agentd/env ]]; then
     echo ""

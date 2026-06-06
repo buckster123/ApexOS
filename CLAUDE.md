@@ -34,6 +34,7 @@ ui/               Frontend — index.html + style.css + app.js (served by axum S
 ~~7.~~ ✓ Pi deploy — agentd running on Pi 5, CerebroCortex 0.5.1 in venv, full WS round-trip smoke-tested
 ~~8.~~ ✓ Event log — `store` crate, JSONL per day to `AGENTD_LOG`, date-roll, lag-safe (2 tests)
 ~~9.~~ ✓ Frontend UI — vanilla HTML/CSS/JS in `ui/`; custom `tokio::fs` handler (ServeDir fails in `ProtectSystem=strict`); terminal aesthetic, boot animation, streaming text, collapsible tool calls, inline approval UX; API key entry dialogue
+~~10.~~ ✓ Cage kiosk — seatd backend, `agentos-kiosk` user (video group), `cage-kiosk.service` auto-starts; Wayland socket live; headless-safe (3 retries then stops)
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
@@ -66,7 +67,7 @@ Agent ID for this dev session: **CLAUDE-APEX**
 
 ## Pi 5 target
 - Debian trixie (not RaspiOS), NVMe `/dev/sda2` 458GB for workspace + event log
-- `agentd` user (unprivileged), cage kiosk on tty1 for local KVM display (deferred)
+- `agentd` user (unprivileged), `agentos-kiosk` user for cage kiosk (video/render/input/tty groups)
 - SSH: `ssh apexos@192.168.0.114` — password `abnudc1337` (local LAN only)
 - `ANTHROPIC_API_KEY` in `/etc/agentd/env` (chmod 600, root-owned)
 - CerebroCortex 0.5.1 installed in `/opt/cerebro-venv`; wrapper at `/usr/local/bin/cerebro-mcp`

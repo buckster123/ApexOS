@@ -1,31 +1,37 @@
 [Unit]
 Description=Agent OS local display (cage kiosk)
-# Only meaningful when a KVM/monitor is attached. Harmless headless: cage
-# fails to find a DRM device and the unit just stays inactive. The network
-# browser frontend works regardless.
+# cage launches Chromium fullscreen on the physical monitor via DRM/KMS.
+# The KVM display renders the same web frontend as the network browser —
+# one UI, two transports. Headless (no monitor): cage exits quickly and
+# systemd gives up after 3 attempts; the network browser still works fine.
 After=agentd.service systemd-user-sessions.service
 Wants=agentd.service
+# Give up after 3 rapid failures (headless / no monitor); network UI still works.
+StartLimitIntervalSec=120
+StartLimitBurst=3
 
 [Service]
 Type=simple
-# cage launches exactly one fullscreen app on the seat's DRM/KMS device.
-# Here that app is a kiosk browser pointed at the local daemon. The KVM
-# display thus renders the SAME web frontend the network browser sees —
-# one GUI, two transports.
+# seatd handles DRM/TTY access (socket at /run/seatd.sock, group video).
+# agentos-kiosk must be in the video group; no logind PAM session needed.
+# RuntimeDirectory= creates /run/cage-kiosk owned by agentos-kiosk (mode 700).
+Environment=LIBSEAT_BACKEND=seatd
+Environment=XDG_RUNTIME_DIR=/run/cage-kiosk
+RuntimeDirectory=cage-kiosk
+RuntimeDirectoryMode=0700
 ExecStart=/usr/bin/cage -- /usr/bin/chromium \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
+  --no-first-run \
+  --disable-translate \
   --ozone-platform=wayland \
   http://localhost:8787
 Restart=on-failure
-RestartSec=3
+RestartSec=10
 
-# Needs a seat / DRM master. Run on the console seat.
 User=agentos-kiosk
 Group=agentos-kiosk
-PAMName=login
-TTYPath=/dev/tty1
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
