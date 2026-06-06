@@ -1,6 +1,6 @@
 use apexos_core::{Bus, ContentBlock, Event, Message, PluginId, SessionId, SystemState, ToolSpec};
 use apexos_gateway::{serve, GatewayState};
-use apexos_plugins::{load as load_plugins, Supervisor};
+use apexos_plugins::{load as load_plugins, PolicyConfig, PolicyEngine, Supervisor};
 use apexos_agent::{AnthropicProvider, TurnEngine, run_turn};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -32,7 +32,18 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => { eprintln!("[agentd] plugins config: {e}"); vec![] }
     };
 
-    let supervisor = Supervisor::new(handle.clone());
+    // Policy engine
+    let policy_path = PathBuf::from(
+        std::env::var("AGENTD_POLICY_TOML")
+            .unwrap_or_else(|_| "config/policy.toml".into())
+    );
+    let policy_config = match PolicyConfig::load(&policy_path) {
+        Ok(c)  => { eprintln!("[agentd] policy mode: {:?}", c.mode); c }
+        Err(e) => { eprintln!("[agentd] policy config: {e} — using defaults"); PolicyConfig::default() }
+    };
+    let policy = PolicyEngine::new(policy_config);
+
+    let supervisor = Supervisor::new(handle.clone(), policy);
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
     // Agent turn engine

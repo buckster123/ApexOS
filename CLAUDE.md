@@ -28,7 +28,7 @@ plans/            Architecture docs and handoff package
 ~~2.~~ ✓ Bus + trivial echo frontend — end-to-end WS round-trip proven (2 integration tests)
 ~~3.~~ ✓ Plugin supervisor — MCP-over-stdio, CerebroCortex wired (66 tools, recall tested)
 ~~4.~~ ✓ Agent turn engine — Provider trait, SSE streaming, thinking-block retention, semaphore, bus wiring (6 tests)
-5. Policy engine — modes, rules, approval-as-event
+~~5.~~ ✓ Policy engine — suggest/auto-edit/yolo × per-tool rules, ApprovalPending/UserApproval flow (12 tests)
 6. Sub-agent routing — `parent` field + routing + cancellation cascade
 
 ## Locked decisions (do NOT re-litigate)
