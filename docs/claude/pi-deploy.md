@@ -39,11 +39,11 @@ Cross-compiling x86_64 → Pi gives "Exec format error". Pi 5 Cortex-A76 builds 
 
 ## Deploying a code change
 ```bash
-# 1. push changes from dev laptop
+# 1. push from dev laptop
 git push
 
-# 2. on Pi
-git pull
+# 2. on Pi (~/ApexOS is a proper git clone of github.com/buckster123/ApexOS)
+cd ~/ApexOS && git pull
 cd agentd && ~/.cargo/bin/cargo build --release -p agentd
 sudo systemctl stop agentd
 sudo cp target/release/agentd /usr/local/bin/agentd

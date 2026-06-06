@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ApexOS bootstrap — run once on a fresh headless Raspberry Pi
 #
-# Usage (private repo, SSH key on Pi):
-#   git clone git@github.com:buckster123/ApexOS.git && sudo bash ApexOS/install.sh
+# One-liner (public repo):
+#   curl -fsSL https://raw.githubusercontent.com/buckster123/ApexOS/main/install.sh | sudo bash
 #
-# Usage (with GitHub token):
-#   curl -H "Authorization: token $GITHUB_TOKEN" \
-#        -fsSL https://raw.githubusercontent.com/buckster123/ApexOS/main/install.sh | sudo bash
+# Or clone first then run:
+#   git clone https://github.com/buckster123/ApexOS.git && sudo bash ApexOS/install.sh
 #
 # Safe to re-run; each step is idempotent.
 set -euo pipefail
