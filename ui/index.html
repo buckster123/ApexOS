@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApexOS</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ─── Boot screen ─────────────────────────────────────────────────── -->
+  <div id="boot">
+    <pre id="boot-logo"></pre>
+    <div id="boot-lines"></div>
+
+    <!-- API key entry — shown only when key is missing -->
+    <div id="key-form" class="hidden">
+      <div id="key-form-inner">
+        <div class="key-label">⚠  ANTHROPIC_API_KEY not configured</div>
+        <div class="key-sub">Enter your key to continue. It will be stored on this device.</div>
+        <div class="key-row">
+          <span class="key-prompt">KEY&nbsp;❯</span>
+          <input id="key-input" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="sk-ant-api03-...">
+          <button id="key-submit">CONNECT</button>
+        </div>
+        <div id="key-error" class="hidden key-error"></div>
+      </div>
+    </div>
+
+    <span id="boot-cursor">_</span>
+  </div>
+
+  <!-- ─── Main app ────────────────────────────────────────────────────── -->
+  <div id="app" class="hidden">
+    <header id="header">
+      <span id="hdr-logo">APEXOS</span>
+      <span id="hdr-center"></span>
+      <span id="hdr-status">
+        <span id="ws-dot">●</span>
+        <span id="ws-label">CONNECTING</span>
+      </span>
+    </header>
+
+    <div id="output"></div>
+
+    <div id="input-row">
+      <span id="prompt-char">❯</span>
+      <input id="prompt-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="send a message..." disabled>
+      <button id="send-btn" disabled>SEND</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

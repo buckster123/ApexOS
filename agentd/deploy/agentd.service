@@ -18,6 +18,7 @@ Environment=AGENTD_POLICY_TOML=/etc/agentd/policy.toml
 # Workspace on the NVMe (event log + working files live here).
 Environment=AGENTD_WORKSPACE=/var/lib/agentd/workspace
 Environment=AGENTD_LOG=/var/lib/agentd/events
+Environment=AGENTD_UI=/usr/local/share/agentd/ui
 # ANTHROPIC_API_KEY lives in /etc/agentd/env — not checked into source
 EnvironmentFile=-/etc/agentd/env
 

@@ -21,6 +21,7 @@ agentd/           Cargo workspace (binary + 5 library crates)
 docs/reference/   Reference Rust snippets from the handoff package (read-only)
 docs/claude/      Lazy-loaded sub-MDs (see ## Docs below)
 plans/            Architecture docs and handoff package
+ui/               Frontend — index.html + style.css + app.js (served by axum ServeDir)
 ```
 
 ## Build order (each step independently testable)
@@ -32,6 +33,7 @@ plans/            Architecture docs and handoff package
 ~~6.~~ ✓ Sub-agent routing — agent_spawn virtual tool, child→parent ToolResult routing, cascade cancel (3 tests)
 ~~7.~~ ✓ Pi deploy — agentd running on Pi 5, CerebroCortex 0.5.1 in venv, full WS round-trip smoke-tested
 ~~8.~~ ✓ Event log — `store` crate, JSONL per day to `AGENTD_LOG`, date-roll, lag-safe (2 tests)
+~~9.~~ ✓ Frontend UI — vanilla HTML/CSS/JS in `ui/`; axum ServeDir (`AGENTD_UI`); terminal aesthetic, boot animation, streaming text, collapsible tool calls, inline approval UX
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)

@@ -4,21 +4,31 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct AnthropicProvider {
     http:    reqwest::Client,
-    api_key: String,
+    api_key: Arc<RwLock<String>>,
     model:   String,
 }
 
 impl AnthropicProvider {
+    /// Standard constructor — wraps the key in a fresh Arc.
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             http:    reqwest::Client::new(),
-            api_key: api_key.into(),
+            api_key: Arc::new(RwLock::new(api_key.into())),
             model:   model.into(),
         }
     }
+
+    /// Constructor that shares an existing key Arc (for runtime key updates).
+    pub fn new_shared(api_key: Arc<RwLock<String>>, model: impl Into<String>) -> Self {
+        Self { http: reqwest::Client::new(), api_key, model: model.into() }
+    }
+
+    pub fn key_arc(&self) -> Arc<RwLock<String>> { Arc::clone(&self.api_key) }
 }
 
 #[async_trait]
@@ -30,10 +40,14 @@ impl Provider for AnthropicProvider {
         system: Option<&str>,
     ) -> anyhow::Result<ChunkStream> {
         let body = build_body(&self.model, history, tools, system);
+        let api_key = self.api_key.read().await.clone();
+        if api_key.is_empty() {
+            return Err(anyhow::anyhow!("ANTHROPIC_API_KEY not set — enter it via the browser UI"));
+        }
 
         let resp = self.http
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)

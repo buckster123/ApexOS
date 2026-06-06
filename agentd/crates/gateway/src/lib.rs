@@ -1,28 +1,37 @@
 use axum::{
-    Router,
+    Json, Router,
     extract::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
-use tokio::sync::broadcast;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+use tower_http::services::ServeDir;
 use apexos_core::{BusHandle, Event};
 
 #[derive(Clone)]
 pub struct GatewayState {
-    pub bus:   BusHandle,
-    pub bcast: broadcast::Sender<Event>,
+    pub bus:     BusHandle,
+    pub bcast:   broadcast::Sender<Event>,
+    pub api_key: Arc<RwLock<String>>,
 }
 
-pub fn router(state: GatewayState) -> Router {
+pub fn router(state: GatewayState, ui_dir: PathBuf) -> Router {
     Router::new()
-        .route("/ws", get(ws_handler))
+        .route("/ws",       get(ws_handler))
+        .route("/api/status", get(status_handler))
+        .route("/api/key",    post(set_key_handler))
+        .fallback_service(ServeDir::new(ui_dir))
         .with_state(state)
 }
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -69,8 +78,35 @@ async fn handle_socket(socket: WebSocket, state: GatewayState) {
     }
 }
 
-pub async fn serve(state: GatewayState, addr: SocketAddr) -> anyhow::Result<()> {
+// ── API routes ────────────────────────────────────────────────────────────────
+
+async fn status_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let set = !state.api_key.read().await.is_empty();
+    Json(serde_json::json!({ "api_key_set": set }))
+}
+
+async fn set_key_handler(
+    State(state): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let key = body["key"].as_str().unwrap_or("").trim().to_string();
+    if key.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "empty key" }));
+    }
+    *state.api_key.write().await = key.clone();
+
+    // Best-effort persist to a file the agentd user can write.
+    let persist_path = std::env::var("AGENTD_KEY_FILE")
+        .unwrap_or_else(|_| "/var/lib/agentd/.api_key".into());
+    let _ = tokio::fs::write(&persist_path, &key).await;
+
+    Json(serde_json::json!({ "ok": true }))
+}
+
+// ── serve ─────────────────────────────────────────────────────────────────────
+
+pub async fn serve(state: GatewayState, addr: SocketAddr, ui_dir: PathBuf) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router(state)).await?;
+    axum::serve(listener, router(state, ui_dir)).await?;
     Ok(())
 }

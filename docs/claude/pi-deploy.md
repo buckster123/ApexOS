@@ -27,6 +27,7 @@
 | `/etc/agentd/policy.toml` | approval policy |
 | `/etc/agentd/env` | `ANTHROPIC_API_KEY=...` — chmod 600, root-owned |
 | `/var/lib/agentd/{workspace,events,cerebro}` | runtime data, owned by `agentd` user |
+| `/usr/local/share/agentd/ui/` | frontend static files (HTML/CSS/JS) |
 | `/var/pip-tmp/` | pip temp + cache dir — avoids filling 2GB `/tmp` tmpfs |
 
 ## Building on Pi (ALWAYS native, never cross-compile)
@@ -44,10 +45,15 @@ git push
 
 # 2. on Pi (~/ApexOS is a proper git clone of github.com/buckster123/ApexOS)
 cd ~/ApexOS && git pull
+
+# Rust changes: rebuild binary
 cd agentd && ~/.cargo/bin/cargo build --release -p agentd
-sudo systemctl stop agentd
-sudo cp target/release/agentd /usr/local/bin/agentd
-sudo systemctl start agentd
+sudo cp agentd/target/release/agentd /usr/local/bin/agentd
+
+# UI-only changes: copy static files (no rebuild needed)
+sudo cp -r ui/. /usr/local/share/agentd/ui/
+
+sudo systemctl restart agentd
 sudo journalctl -u agentd -n 20 --no-pager
 ```
 

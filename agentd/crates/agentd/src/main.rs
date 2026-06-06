@@ -13,16 +13,45 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::AbortHandle;
 
+fn load_api_key() -> String {
+    // 1. Environment variable (set by systemd EnvironmentFile or shell)
+    if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
+        if !k.is_empty() { return k; }
+    }
+    // 2. Runtime file written by the browser UI key-entry flow
+    let path = std::env::var("AGENTD_KEY_FILE")
+        .unwrap_or_else(|_| "/var/lib/agentd/.api_key".into());
+    if let Ok(k) = std::fs::read_to_string(&path) {
+        let k = k.trim().to_string();
+        if !k.is_empty() { return k; }
+    }
+    String::new()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let (bus, handle, bcast) = Bus::new(SystemState::default());
     tokio::spawn(bus.run());
 
+    // Shared API key — readable/writable from both the turn engine and browser UI
+    let api_key_str = load_api_key();
+    if api_key_str.is_empty() {
+        eprintln!("[agentd] ANTHROPIC_API_KEY not set — enter via browser UI at :8787");
+    }
+    let api_key_arc = Arc::new(RwLock::new(api_key_str));
+
     // Gateway
-    let gw_state = GatewayState { bus: handle.clone(), bcast: bcast.clone() };
+    let gw_state = GatewayState {
+        bus:     handle.clone(),
+        bcast:   bcast.clone(),
+        api_key: Arc::clone(&api_key_arc),
+    };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
+    let ui_dir = PathBuf::from(
+        std::env::var("AGENTD_UI").unwrap_or_else(|_| "ui".into())
+    );
     tokio::spawn(async move {
-        if let Err(e) = serve(gw_state, gw_addr).await {
+        if let Err(e) = serve(gw_state, gw_addr, ui_dir).await {
             eprintln!("[gateway] error: {e}");
         }
     });
@@ -52,15 +81,9 @@ async fn main() -> anyhow::Result<()> {
     let supervisor = Supervisor::new(handle.clone(), policy);
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
-    // Agent turn engine
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .unwrap_or_else(|_| {
-            eprintln!("[agentd] ANTHROPIC_API_KEY not set — agent turns will fail");
-            String::new()
-        });
-
+    // Agent turn engine — shares the same key Arc so browser UI updates take effect immediately
     let engine: Arc<TurnEngine> = Arc::new(TurnEngine::new(
-        AnthropicProvider::new(api_key, "claude-opus-4-8"),
+        AnthropicProvider::new_shared(Arc::clone(&api_key_arc), "claude-opus-4-8"),
         16,
         None,
     ));
