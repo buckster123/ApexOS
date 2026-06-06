@@ -160,10 +160,9 @@ fi
 install -m 644 "$REPO_DIR/agentd/config/policy.toml"  /etc/agentd/policy.toml
 install -m 644 "$REPO_DIR/agentd/deploy/agentd.service" /etc/systemd/system/agentd.service
 
-# UI static files
-mkdir -p /usr/local/share/agentd/ui
-cp -r "$REPO_DIR/ui/." /usr/local/share/agentd/ui/
-ok "UI files installed to /usr/local/share/agentd/ui"
+# UI static files (under ReadWritePaths so ProtectSystem=strict can read them)
+cp -r "$REPO_DIR/ui/." /var/lib/agentd/ui/
+ok "UI files installed to /var/lib/agentd/ui"
 
 systemctl daemon-reload
 systemctl enable agentd
