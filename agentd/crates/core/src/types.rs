@@ -1,3 +1,4 @@
+use std::fmt;
 use serde::{Deserialize, Serialize};
 
 // ── ID newtypes (cheap, copyable, type-safe) ───────────────────────────────
@@ -10,6 +11,10 @@ pub struct ActionId(pub u64);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PluginId(pub String);
+
+impl fmt::Display for PluginId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.0) }
+}
 
 // ── The central event enum ──────────────────────────────────────────────────
 

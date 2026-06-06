@@ -26,7 +26,7 @@ plans/            Architecture docs and handoff package
 ## Build order (each step independently testable)
 ~~1.~~ ✓ `core` — types + unit-tested `state.apply()` (6 tests, 0 failures)
 ~~2.~~ ✓ Bus + trivial echo frontend — end-to-end WS round-trip proven (2 integration tests)
-3. Plugin supervisor against real CerebroCortex — **top-tier item**
+~~3.~~ ✓ Plugin supervisor — MCP-over-stdio, CerebroCortex wired (66 tools, recall tested)
 4. Agent turn engine — streaming, thinking-block retention, semaphore
 5. Policy engine — modes, rules, approval-as-event
 6. Sub-agent routing — `parent` field + routing + cancellation cascade
@@ -39,10 +39,12 @@ plans/            Architecture docs and handoff package
 - Multi-agent: `parent: Option<SessionId>` on `AgentContext`; no architecture change
 
 ## Deferred to keyboard (do not guess)
-- Exact MCP framing vs real CerebroCortex entrypoint
 - Hot-reload mechanics
 - Event-log format (lean JSONL v1)
 - tokio task-shutdown ordering
+
+## Resolved locked items
+- **MCP framing**: newline-delimited JSON, protocol `"2024-11-05"`. Real entrypoint: `/home/andre/Projects/CerebroCortex/cerebro-mcp`
 
 ## Key files
 - `docs/reference/core_types.rs` — load-bearing types (Event, ToolCall, AgentContext, Message)

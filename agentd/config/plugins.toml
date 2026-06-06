@@ -1,25 +1,22 @@
-# /etc/agentd/plugins.toml
+# /etc/agentd/plugins.toml  (dev: agentd/config/plugins.toml)
 #
-# Declared plugins, read at boot by the supervisor. A plugin is ANY process
-# that speaks MCP over stdio — so any language works, and CerebroCortex runs
-# unmodified. Adding a capability = add a [[plugin]] block (or, once
-# hot-reload lands, `agentctl plugin add`).
+# A plugin is ANY process that speaks MCP over stdio.
+# Adding a capability = add a [[plugin]] block.
 
 [[plugin]]
 id      = "cerebro"
-cmd     = "python"
-args    = ["-m", "cerebrocortex.mcp"]   # <-- confirm the real entrypoint in CC
+cmd     = "/home/andre/Projects/CerebroCortex/cerebro-mcp"
+args    = []
 restart = "always"
-# cwd / env can be added here as needed, e.g.:
-# cwd   = "/opt/cerebrocortex"
-# env   = { CEREBRO_DB = "/var/lib/agentd/cerebro.db" }
+# Production Pi path will be different — update when deploying.
+# env = { CEREBRO_DATA_DIR = "/var/lib/agentd/cerebro" }
 
 [[plugin]]
 id      = "shell"
-cmd     = "/usr/lib/agentd/plugins/shell-mcp"   # bundled Rust binary
+cmd     = "/usr/lib/agentd/plugins/shell-mcp"
 restart = "on-failure"
 
 [[plugin]]
 id      = "fs"
-cmd     = "/usr/lib/agentd/plugins/fs-mcp"      # bundled Rust binary
+cmd     = "/usr/lib/agentd/plugins/fs-mcp"
 restart = "on-failure"
