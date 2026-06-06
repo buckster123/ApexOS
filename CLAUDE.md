@@ -33,7 +33,7 @@ ui/               Frontend — index.html + style.css + app.js (served by axum S
 ~~6.~~ ✓ Sub-agent routing — agent_spawn virtual tool, child→parent ToolResult routing, cascade cancel (3 tests)
 ~~7.~~ ✓ Pi deploy — agentd running on Pi 5, CerebroCortex 0.5.1 in venv, full WS round-trip smoke-tested
 ~~8.~~ ✓ Event log — `store` crate, JSONL per day to `AGENTD_LOG`, date-roll, lag-safe (2 tests)
-~~9.~~ ✓ Frontend UI — vanilla HTML/CSS/JS in `ui/`; axum ServeDir (`AGENTD_UI`); terminal aesthetic, boot animation, streaming text, collapsible tool calls, inline approval UX
+~~9.~~ ✓ Frontend UI — vanilla HTML/CSS/JS in `ui/`; custom `tokio::fs` handler (ServeDir fails in `ProtectSystem=strict`); terminal aesthetic, boot animation, streaming text, collapsible tool calls, inline approval UX; API key entry dialogue
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
@@ -71,7 +71,8 @@ Agent ID for this dev session: **CLAUDE-APEX**
 - `ANTHROPIC_API_KEY` in `/etc/agentd/env` (chmod 600, root-owned)
 - CerebroCortex 0.5.1 installed in `/opt/cerebro-venv`; wrapper at `/usr/local/bin/cerebro-mcp`
 - Always build on Pi (`~/.cargo/bin/cargo build --release`) — do NOT scp x86 binaries
-- Pi data: `/var/lib/agentd/{workspace,events,cerebro}`
+- Pi data: `/var/lib/agentd/{workspace,events,cerebro,ui}`
+- **Binary update**: stop service before copying — `systemctl stop agentd` then `cp`, then `start` (running binary gives "text file busy")
 
 ## Docs
 Sub-specialization docs in `docs/claude/`. Load the relevant one when entering
