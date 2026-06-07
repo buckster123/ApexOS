@@ -131,9 +131,9 @@ restart = "always"
 - [x] Build on Pi: `cd ~/ApexOS/tools && ~/.cargo/bin/cargo build --release` (1m 12s)
 - [x] Copy binary: `sudo cp target/release/apexos-tools /usr/local/bin/`
 - [x] Register in `plugins.pi.toml` + policy rules in `policy.toml`; deployed to `/etc/agentd/`
-- [ ] Smoke test: ask agent to run `uname -a`, read `/etc/os-release`, fetch `https://httpbin.org/get`
+- [x] Smoke test: `uname -a` → `Linux ApexOS 6.12.75+rpt-rpi-2712 aarch64 GNU/Linux`; `/etc/os-release` read; `http_fetch` all pass
 - [x] Smoke test: agent self-reported vitals — uptime 22.6h, CPU 39.7°C, RAM 1121/4045MB used — all live on first turn after deploy
-- [ ] Verify denylist: `rm -rf /` attempt returns error (not executed)
+- [x] Verify denylist: `rm -rf /` → `"BLOCKED: rm -rf / is blocked"` — caught cleanly, never executed
 - [x] Commit: `feat(tools): apexos-tools MCP server — shell, fs, http, sysstat`
 
 ---
