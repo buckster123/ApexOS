@@ -43,6 +43,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~13.~~ ✓ Session persistence + multi-client sync — `session_store` crate (append-only JSONL per session); server-issued session IDs (AtomicU64, survives restart); WS hello/session_init handshake; history replay with full thinking-block context; session picker modal (Ctrl+Shift+S); cage kiosk + browser share live session; verified: agent quotes prior messages verbatim after F5
 ~~14.~~ ✓ Agent bodies Phase 6a — `apexos-tools` MCP server (`tools/` workspace); 11 tools: run_command (shell denylist), read_file, write_file, list_dir, create_dir, delete_path, http_fetch, cpu_temp, disk_usage, memory_info, uptime; deployed to Pi, supervisor confirmed `plugin 'apexos-tools' up — 11 tools`
 ~~15.~~ ✓ Agent bodies Phase 6b — `schedule_task` / `list_schedules` / `cancel_schedule` virtual tools; cron-driven autonomous turns; JSONL persistence at `schedules.jsonl`; 60s poll loop fires `UserPrompt` on bus
+~~16.~~ ✓ Agent bodies Phase 6c — `notify` tool in `apexos-tools`; surfaces: JSONL log (always) + notify-send toast + espeak-ng TTS + ntfy.sh (env-gated) + Telegram (env-gated); agentd added to audio group; espeak-ng installed; smoke: 3/3 local surfaces fired clean
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
@@ -76,7 +77,7 @@ Agent ID for this dev session: **CLAUDE-APEX**
 ## Pi 5 target
 - Debian trixie (not RaspiOS), NVMe `/dev/sda2` 458GB for workspace + event log
 - `agentd` user (unprivileged), `agentos-kiosk` user for cage kiosk (video/render/input/tty groups)
-- SSH: `ssh apexos@192.168.0.114` — password `abnudc1337` (local LAN only)
+- SSH: `ssh apexos@192.168.0.158` — password `abnudc1337` (local LAN only) [sensor Pi, USB boot; 8GB RAM, better cooling]
 - `ANTHROPIC_API_KEY` in `/etc/agentd/env` (chmod 600, root-owned)
 - CerebroCortex 0.5.1 installed in `/opt/cerebro-venv`; wrapper at `/usr/local/bin/cerebro-mcp`
 - Always build on Pi (`~/.cargo/bin/cargo build --release`) — do NOT scp x86 binaries

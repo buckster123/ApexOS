@@ -182,7 +182,7 @@ Baked into `agentd/crates/agentd/src/main.rs` as a new virtual tool (same patter
 
 ---
 
-## Phase 6c — Notifications ✗
+## Phase 6c — Notifications ✓
 
 **Goal:** Agent can reach the user proactively, without user initiating.
 
@@ -218,17 +218,21 @@ Tool signature: `notify(message, title?, priority?, surfaces?)` where surfaces d
 
 ### Checklist
 
-- [ ] Add `notify` function to `tools/crates/apexos-tools/src/tools.rs`
-- [ ] Surface 1: append to `/var/lib/agentd/notifications.jsonl`
-- [ ] Surface 2: `notify-send` via `run_command` (reuse existing shell infrastructure)
-- [ ] Surface 3: `aplay` chime — embed a short beep or use a system sound
-- [ ] Surface 4: TTS — `espeak-ng -v en "{message}"`, fallback detect piper
-- [ ] Surface 5: ntfy.sh — `http_fetch POST https://ntfy.sh/{NTFY_TOPIC}` if env set
-- [ ] Surface 6: Telegram — POST to Bot API if BOT_TOKEN + CHAT_ID env set
-- [ ] Add `notify` to `tools/list` handler and policy.toml (`yolo`)
-- [ ] Build + deploy to Pi
-- [ ] Smoke test: ask agent "notify me that the body is online" — verify TTS + toast fire
-- [ ] Commit: `feat(notify): notify tool — JSONL + toast + audio/TTS + ntfy + telegram stack`
+- [x] Add `notify` function to `tools/crates/apexos-tools/src/tools.rs`
+- [x] Surface 1: append to `/var/lib/agentd/notifications.jsonl` — always first, unconditional
+- [x] Surface 2: `notify-send` fire-and-forget (silently succeeds if no daemon)
+- [ ] Surface 3: `aplay` chime — deferred (no chime file included; espeak-ng covers audio)
+- [x] Surface 4: TTS — `espeak-ng -s 145` (message via arg); piper if PIPER_MODEL env set (passes message via env var to avoid shell-quoting issues)
+- [x] Surface 5: ntfy.sh — reqwest POST to `https://ntfy.sh/{NTFY_TOPIC}` if env set
+- [x] Surface 6: Telegram — POST Bot API if TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env set
+- [x] Add `notify` to `tools/list` handler and policy.toml (`allow`)
+- [x] Fixed policy.toml: Rule enum only supports allow/ask/workspace; yolo→allow, auto-edit→workspace
+- [x] Install espeak-ng on Pi: `apt-get install -y espeak-ng`
+- [x] Add agentd user to audio group: `usermod -aG audio agentd`
+- [x] Build + deploy: 5.82s compile, `apexos-tools` up — 12 tools
+- [x] Smoke test as agentd user: `surfaces_fired: ["jsonl","notify-send","tts"]`, surfaces_failed: [] — all three local surfaces clean
+- [x] JSONL verified: `{"ts":1780846102,"title":"ApexOS","message":"Agent OS notification system online..."}` written
+- [x] Commit + push: `add notify tool` + `fix policy.toml rule values`
 
 ---
 
