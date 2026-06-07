@@ -14,6 +14,10 @@ RestartSec=10
 Environment=HOME=/home/apexos
 # sensor_head package (no pip install -e; use PYTHONPATH) + bme68x BSEC2 egg
 Environment=PYTHONPATH=/home/apexos/SensorHead:/home/apexos/SensorHead/venv/lib/python3.13/site-packages/bme68x-2.6.1-py3.13-linux-aarch64.egg
+# Blinka: use lgpio backend on Pi 5
+Environment=BLINKA_LGPIO=1
+# BSEC calibration state lives alongside the clone on the USB drive
+Environment=SENSORHEAD_DATA_DIR=/home/apexos/SensorHead/data
 
 [Install]
 WantedBy=multi-user.target
