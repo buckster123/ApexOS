@@ -166,6 +166,7 @@ function handleEvent(ev) {
     case 'plugin_down':         onPluginDown(ev);         break;
     case 'evolution_proposed':  onEvolutionProposed(ev);  break;
     case 'evolution_applied':   onEvolutionApplied(ev);   break;
+    case 'sensor_reading':      onSensorReading(ev);      break;
     case 'error':               onAgentError(ev);          break;
   }
 }
@@ -855,6 +856,73 @@ function collapseAllTools() {
       if (toggle) toggle.textContent = '▾';
     });
   }
+}
+
+// ─── Sensor readings ──────────────────────────────────────────────────────────
+const sensorState = { env: null, thermal: null, cpu_c: null, ts: null };
+
+function onSensorReading(ev) {
+  const r = ev.reading;
+  if (!r) return;
+  if (r.kind === 'air_quality')  { sensorState.env    = r; sensorState.ts = Date.now(); }
+  if (r.kind === 'thermal_frame'){ sensorState.thermal = r; }
+  if (r.kind === 'temperature' && r.sensor_id === 'cpu_thermal') sensorState.cpu_c = r.celsius;
+  updateSensorWidget();
+}
+
+function iaqLabel(iaq) {
+  if (iaq <  51) return 'Excellent';
+  if (iaq < 101) return 'Good';
+  if (iaq < 151) return 'Lightly polluted';
+  if (iaq < 201) return 'Moderately polluted';
+  if (iaq < 251) return 'Heavily polluted';
+  return 'Severely polluted';
+}
+
+function iaqColor(iaq) {
+  if (iaq <  51) return '#39ff14';
+  if (iaq < 101) return '#a0ff70';
+  if (iaq < 151) return '#f0b429';
+  if (iaq < 201) return '#ff8c00';
+  return '#ff4444';
+}
+
+function updateSensorWidget() {
+  const env     = sensorState.env;
+  const thermal = sensorState.thermal;
+
+  const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+
+  if (env) {
+    set('s-temp',  env.temperature_c?.toFixed(1) ?? '—');
+    set('s-humid', env.humidity_pct?.toFixed(1)  ?? '—');
+    set('s-press', env.pressure_hpa?.toFixed(0)  ?? '—');
+    const iaq = env.iaq ?? 0;
+    set('s-iaq', iaq.toFixed(0));
+    const bar = document.getElementById('s-iaq-bar');
+    if (bar) {
+      bar.style.width = Math.min(100, iaq / 5) + '%';
+      bar.style.background = iaqColor(iaq);
+    }
+    set('s-iaq-label', iaqLabel(iaq));
+    if (sensorState.ts) {
+      const age = Math.round((Date.now() - sensorState.ts) / 1000);
+      set('sensor-age', age < 90 ? `${age}s ago` : `${Math.round(age/60)}m ago`);
+    }
+  }
+  if (thermal) {
+    set('s-tmin',  thermal.min_c?.toFixed(1)  ?? '—');
+    set('s-tmean', thermal.mean_c?.toFixed(1) ?? '—');
+    set('s-tmax',  thermal.max_c?.toFixed(1)  ?? '—');
+  }
+  if (sensorState.cpu_c !== null) {
+    set('s-cpu', sensorState.cpu_c.toFixed(1));
+  }
+}
+
+// ─── Skin switcher ────────────────────────────────────────────────────────────
+function switchSkin(target) {
+  location.href = target === 'desktop' ? '/desktop.html' : '/';
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────

@@ -193,10 +193,12 @@ async fn static_handler(
     let file_name = if path.is_empty() { "index.html" } else { path };
 
     let content_type: &'static str = match file_name {
-        "index.html"  => "text/html; charset=utf-8",
-        "style.css"   => "text/css; charset=utf-8",
-        "app.js"      => "application/javascript; charset=utf-8",
-        _             => return StatusCode::NOT_FOUND.into_response(),
+        "index.html"        => "text/html; charset=utf-8",
+        "desktop.html"      => "text/html; charset=utf-8",
+        "style.css"         => "text/css; charset=utf-8",
+        "desktop-style.css" => "text/css; charset=utf-8",
+        "app.js"            => "application/javascript; charset=utf-8",
+        _                   => return StatusCode::NOT_FOUND.into_response(),
     };
 
     let full_path = state.ui_dir.join(file_name);
