@@ -20,9 +20,9 @@ No "almost done" — item is checked when tested and committed.
 - [x] `crates/agentd/src/main.rs` — add `propose_evolution_spec()` + wire into `gather_tools()`
 - [x] `agentd/config/policy.toml` — add `"propose_evolution" = "allow"` rule
 - [x] All 36 tests pass (0 failures)
-- [ ] Smoke test on Pi: send `propose_evolution` from browser → EvolutionProposed appears in WS stream and JSONL log
-- [ ] Commit: `feat(evolution): add EvolutionProposal event types and stub tool`
-- [ ] Update `docs/claude/core-types.md` with new types
+- [x] Smoke test on Pi: EvolutionProposed appears on WS stream and in JSONL log (verified)
+- [x] Commit: `feat(evolution): add EvolutionProposal event types and stub tool`
+- [x] Update `docs/claude/core-types.md` with new types
 
 ---
 
