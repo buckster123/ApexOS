@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ApexOS Desktop</title>
   <link rel="stylesheet" href="lib/winbox.min.css">
+  <link rel="stylesheet" href="lib/xterm.css">
   <link rel="stylesheet" href="desktop-style.css">
 </head>
 <body>
@@ -83,6 +84,7 @@
     <div class="sm-pane sm-left">
       <div class="sm-section-title">APPLICATIONS</div>
       <button class="sm-item" onclick="launchApp('agent')"><span class="sm-emoji">🤖</span>Agent</button>
+      <button class="sm-item" onclick="launchApp('terminal')"><span class="sm-emoji">💻</span>Terminal</button>
       <button class="sm-item" onclick="launchApp('sensors')"><span class="sm-emoji">📡</span>Sensors</button>
       <button class="sm-item" onclick="launchApp('cerebro')"><span class="sm-emoji">🧠</span>Cerebro</button>
       <button class="sm-item" onclick="launchApp('sensorhead')"><span class="sm-emoji">👁</span>Sensor Head</button>
@@ -107,7 +109,7 @@
       <button id="send-btn" disabled>SEND</button>
       <button id="new-session-btn" title="New session (Ctrl+K)">⊕</button>
     </div>
-    <div id="shortcuts-bar">Enter send · Esc cancel · Ctrl+K new · Ctrl+Shift+S sessions</div>
+    <div id="shortcuts-bar">Enter send · Esc cancel · Ctrl+K new · Ctrl+Shift+S sessions · !cmd shell</div>
   </div>
 
   <!-- Sensors window -->
@@ -136,6 +138,11 @@
       <div class="sys-line"><span class="sl-lbl">CPU</span><span class="sl-val" id="s-cpu">—</span><span class="sl-unit">°C</span></div>
       <div class="sys-line"><span class="sl-lbl">TOOLS</span><span class="sl-val" id="s-tools">—</span></div>
     </div>
+  </div>
+
+  <!-- Terminal window -->
+  <div id="win-terminal-content" class="win-content terminal-win" style="display:none">
+    <div id="terminal-xterm"></div>
   </div>
 
   <!-- Cerebro window (iframe) -->
@@ -241,6 +248,8 @@
   <span id="hdr-center" style="display:none"></span>
 
   <script src="lib/winbox.min.js"></script>
+  <script src="lib/xterm.min.js"></script>
+  <script src="lib/xterm-addon-fit.min.js"></script>
   <script defer src="lib/alpine.min.js"></script>
   <script src="app.js"></script>
   <script src="desktop-app.js"></script>

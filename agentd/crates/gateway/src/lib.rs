@@ -50,6 +50,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/evolution/history",  get(evolution_history_handler))
         .route("/api/evolution/stats",    get(evolution_stats_handler))
         .route("/api/sessions",           get(sessions_handler))
+        .route("/api/run",                post(run_command_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -487,6 +488,41 @@ async fn sessions_handler(State(state): State<GatewayState>) -> impl IntoRespons
     });
 
     Json(serde_json::json!(sessions))
+}
+
+// ── shell passthrough ─────────────────────────────────────────────────────────
+
+async fn run_command_handler(
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let command = match body["command"].as_str() {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return Json(serde_json::json!({ "ok": false, "error": "missing command" })),
+    };
+
+    // Block obviously destructive patterns
+    const DENY: &[&str] = &["rm -rf /", "mkfs", "dd if=/dev/zero", ":(){ :|:& };:"];
+    for pat in DENY {
+        if command.contains(pat) {
+            return Json(serde_json::json!({ "ok": false, "error": "command denied" }));
+        }
+    }
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::process::Command::new("sh").arg("-c").arg(&command).output(),
+    ).await;
+
+    match result {
+        Ok(Ok(o)) => Json(serde_json::json!({
+            "ok":        true,
+            "stdout":    String::from_utf8_lossy(&o.stdout).to_string(),
+            "stderr":    String::from_utf8_lossy(&o.stderr).to_string(),
+            "exit_code": o.status.code().unwrap_or(-1),
+        })),
+        Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        Err(_)     => Json(serde_json::json!({ "ok": false, "error": "timed out (30s)" })),
+    }
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

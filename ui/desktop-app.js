@@ -55,6 +55,11 @@ const WIN_DEFAULTS = {
     x: 200, y: 80, width: 520, height: 480,
     background: 'var(--wb-bg)',
   },
+  terminal: {
+    title: '💻 Terminal',
+    x: 120, y: 80, width: 720, height: 460,
+    background: '#0d0f18',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -111,6 +116,9 @@ function openWin(id) {
   }
 
   content.style.display = '';
+
+  // Terminal: defer init until WinBox has laid out the element
+  if (id === 'terminal') setTimeout(initTerminal, 60);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -190,6 +198,97 @@ setInterval(() => {
   const el = document.getElementById('s-tools');
   if (el) el.textContent = tools || '—';
 }, 3000);
+
+// ─── Terminal window ──────────────────────────────────────────────────────────
+let term     = null;
+let termFit  = null;
+let termBuf  = '';
+let termCwd  = '';
+
+function initTerminal() {
+  if (term) {
+    // Already open — just refit in case window was resized
+    if (termFit) setTimeout(() => termFit.fit(), 30);
+    return;
+  }
+  const container = document.getElementById('terminal-xterm');
+  if (!container || typeof window.Terminal === 'undefined') return;
+
+  term = new window.Terminal({
+    theme: {
+      background: '#0d0f18', foreground: '#c8cdd8', cursor: '#39ff14',
+      cursorAccent: '#0d0f18', selectionBackground: 'rgba(108,138,255,0.3)',
+      black: '#131620',   red: '#ff6b6b',   green: '#39ff14',  yellow: '#f0b429',
+      blue: '#6c8aff',    magenta: '#ff79c6', cyan: '#8be9fd', white: '#c8cdd8',
+      brightBlack: '#606680', brightGreen: '#5fffad',
+    },
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+    fontSize: 13, lineHeight: 1.4, cursorBlink: true, allowTransparency: true,
+  });
+  termFit = new window.FitAddon.FitAddon();
+  term.loadAddon(termFit);
+  term.open(container);
+  setTimeout(() => termFit.fit(), 30);
+
+  term.writeln('\x1b[32m▸ ApexOS Terminal\x1b[0m  · Ctrl+L clear');
+  term.writeln('');
+  termPrompt();
+
+  term.onKey(({ key, domEvent }) => {
+    const k = domEvent.keyCode;
+    if (k === 13) {
+      term.writeln('');
+      const cmd = termBuf.trim();
+      termBuf = '';
+      if (cmd) termRun(cmd); else termPrompt();
+    } else if (k === 8) {
+      if (termBuf.length > 0) { termBuf = termBuf.slice(0, -1); term.write('\b \b'); }
+    } else if (domEvent.ctrlKey && domEvent.key === 'l') {
+      term.clear(); termPrompt();
+    } else if (!domEvent.ctrlKey && !domEvent.altKey && key.length === 1) {
+      termBuf += key; term.write(key);
+    }
+  });
+}
+
+function termPrompt() {
+  term.write(`\x1b[32m${termCwd || '~'}\x1b[0m \x1b[36m$\x1b[0m `);
+}
+
+async function termRun(cmd) {
+  if (cmd === 'clear' || cmd === 'cls') { term.clear(); termPrompt(); return; }
+
+  // Track cwd for `cd` commands
+  if (cmd.startsWith('cd ') || cmd === 'cd') {
+    const dir = cmd.length > 3 ? cmd.slice(3).trim() : '~';
+    const res = await termExec(`cd ${dir} 2>&1 && pwd`);
+    if (res.ok && res.stdout.trim()) termCwd = res.stdout.trim();
+    else if (res.stderr) term.writeln(`\x1b[31m${res.stderr.trimEnd()}\x1b[0m`);
+    termPrompt(); return;
+  }
+
+  const full = termCwd ? `cd ${termCwd} && ${cmd}` : cmd;
+  const res  = await termExec(full);
+  if (res.ok) {
+    if (res.stdout) term.write(res.stdout.replace(/\r?\n/g, '\r\n'));
+    if (res.stderr) term.write('\x1b[31m' + res.stderr.replace(/\r?\n/g, '\r\n') + '\x1b[0m');
+    if (!res.stdout && !res.stderr && res.exit_code !== 0)
+      term.writeln(`\x1b[31mexit ${res.exit_code}\x1b[0m`);
+  } else {
+    term.writeln(`\x1b[31merror: ${res.error}\x1b[0m`);
+  }
+  termPrompt();
+}
+
+async function termExec(cmd) {
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: cmd }),
+    });
+    return await r.json();
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
 
 // ─── Alpine data for Settings window ─────────────────────────────────────────
 function settingsApp() {

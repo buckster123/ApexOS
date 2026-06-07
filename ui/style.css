@@ -418,6 +418,13 @@ html, body {
 .btn-deny    { color: var(--error); border: 1px solid var(--error); }
 .btn-deny:hover { background: #1a0010; }
 
+/* ─── Shell passthrough (!cmd) ───────────────────────────────────────────── */
+.user-line.passthrough-line { color: var(--accent); }
+.passthrough-out     { font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 0; }
+.passthrough-err     { font-size: 11px; color: #ff6b6b; }
+.passthrough-exit    { font-size: 11px; color: var(--fg-dim); }
+.passthrough-running { font-size: 11px; color: var(--fg-dim); font-style: italic; }
+
 /* ─── System messages ────────────────────────────────────────────────────── */
 .sys-msg {
   color: var(--fg-dim);

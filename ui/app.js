@@ -689,7 +689,17 @@ async function initModelSelector(currentModel) {
 function sendPrompt() {
   const input = document.getElementById('prompt-input');
   const text  = input.value.trim();
-  if (!text || ws?.readyState !== WebSocket.OPEN) return;
+  if (!text) return;
+
+  // Shell passthrough: !cmd bypasses the agent and runs directly via /api/run
+  if (text.startsWith('!')) {
+    input.value = '';
+    const cmd = text.slice(1).trimStart();
+    if (cmd) runPassthrough(cmd);
+    return;
+  }
+
+  if (ws?.readyState !== WebSocket.OPEN) return;
 
   input.value = '';
   enableInput(false);
@@ -719,6 +729,47 @@ function sendPrompt() {
   activeTurn = { turnEl, agentBlock, cursor };
 
   sendWs({ type: 'user_prompt', session: SESSION_ID, text });
+  scrollDown();
+}
+
+// ─── Shell passthrough (!cmd) ─────────────────────────────────────────────────
+async function runPassthrough(cmd) {
+  const output  = document.getElementById('output');
+  const turnEl  = document.createElement('div');
+  turnEl.className = 'turn';
+
+  const userLine = document.createElement('div');
+  userLine.className   = 'user-line passthrough-line';
+  userLine.dataset.time = timestamp();
+  userLine.textContent = '$ ' + cmd;
+  turnEl.appendChild(userLine);
+
+  const result = document.createElement('div');
+  result.className = 'agent-block';
+  result.innerHTML = '<span class="passthrough-running">running…</span>';
+  turnEl.appendChild(result);
+
+  output.appendChild(turnEl);
+  scrollDown();
+
+  try {
+    const r = await fetch('/api/run', {
+      method:  'POST',
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify({ command: cmd }),
+    });
+    const d = await r.json();
+    const out = [d.stdout, d.stderr].filter(Boolean).join('').trimEnd();
+    if (!d.ok) {
+      result.innerHTML = `<span class="passthrough-err">${esc(d.error || 'error')}</span>`;
+    } else if (out) {
+      result.innerHTML = `<pre class="passthrough-out">${esc(out)}</pre>`;
+    } else {
+      result.innerHTML = `<span class="passthrough-exit">exit ${d.exit_code}</span>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<span class="passthrough-err">${esc(String(e))}</span>`;
+  }
   scrollDown();
 }
 
