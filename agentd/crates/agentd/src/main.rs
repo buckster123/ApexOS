@@ -5,7 +5,7 @@ use scheduler::{load_schedules, run_scheduler, spawn_scheduler_handler, Schedule
 
 use apexos_core::{
     ActionId, Bus, ContentBlock, Event, EvolutionId, EvolutionProposal, Message,
-    PluginId, PolicyMode, SessionId, Subsystem, SystemState, ToolOutput, ToolSpec,
+    PluginId, PolicyMode, SessionId, SensorReading, Subsystem, SystemState, ToolOutput, ToolSpec,
 };
 use apexos_gateway::{serve, GatewayState};
 use apexos_plugins::{
@@ -111,18 +111,23 @@ async fn main() -> anyhow::Result<()> {
     let histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>> =
         Arc::new(Mutex::new(initial_histories));
 
+    let sensor_bridge_token = Arc::new(
+        std::env::var("SENSOR_BRIDGE_TOKEN").unwrap_or_default()
+    );
+
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
-        bus:             handle.clone(),
-        bcast:           bcast.clone(),
-        api_key:         Arc::clone(&api_key_arc),
-        model:           Arc::clone(&model_arc),
-        policy_mode:     policy_mode_str,
+        bus:                  handle.clone(),
+        bcast:                bcast.clone(),
+        api_key:              Arc::clone(&api_key_arc),
+        model:                Arc::clone(&model_arc),
+        policy_mode:          policy_mode_str,
         ui_dir,
-        events_dir:      log_dir.clone(),
-        sessions_dir:    log_dir.join("sessions"),
-        histories:       Arc::clone(&histories),
-        next_session_id: Arc::clone(&next_session_id),
+        events_dir:           log_dir.clone(),
+        sessions_dir:         log_dir.join("sessions"),
+        histories:            Arc::clone(&histories),
+        next_session_id:      Arc::clone(&next_session_id),
+        sensor_bridge_token:  sensor_bridge_token,
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -798,6 +803,29 @@ fn spawn_agent_router(
                 }
                 Ok(Event::PluginDown { plugin, .. }) => {
                     tool_reg.write().await.remove(&plugin);
+                }
+
+                // ── sensor events ────────────────────────────────────────────
+                Ok(Event::SensorReading { node_id, reading, timestamp: _ }) => {
+                    // Threshold check: fire a turn if a critical condition is seen.
+                    let alert: Option<String> = match &reading {
+                        SensorReading::Temperature { celsius, sensor_id } if *celsius > 85.0 => {
+                            Some(format!(
+                                "[sensor alert] {node_id}/{sensor_id} CPU temperature critical: {celsius:.1}°C — please investigate"
+                            ))
+                        }
+                        SensorReading::Motion { detected: true, sensor_id } => {
+                            Some(format!(
+                                "[sensor alert] {node_id}/{sensor_id} motion detected"
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(prompt) = alert {
+                        let root = SessionId(0);
+                        session_depths.lock().await.entry(root).or_insert(0);
+                        bus.emit(Event::UserPrompt { session: root, text: prompt }).await;
+                    }
                 }
 
                 Ok(_) => {}

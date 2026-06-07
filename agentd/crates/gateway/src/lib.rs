@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{
-        State,
+        Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{header, StatusCode},
@@ -19,22 +19,25 @@ use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
 
 #[derive(Clone)]
 pub struct GatewayState {
-    pub bus:              BusHandle,
-    pub bcast:            broadcast::Sender<Event>,
-    pub api_key:          Arc<RwLock<String>>,
-    pub model:            Arc<RwLock<String>>,
-    pub policy_mode:      String,
-    pub ui_dir:           PathBuf,
-    pub events_dir:       PathBuf,
-    pub sessions_dir:     PathBuf,
-    pub histories:        Arc<Mutex<HashMap<SessionId, Vec<CoreMessage>>>>,
-    pub next_session_id:  Arc<AtomicU64>,
+    pub bus:                   BusHandle,
+    pub bcast:                 broadcast::Sender<Event>,
+    pub api_key:               Arc<RwLock<String>>,
+    pub model:                 Arc<RwLock<String>>,
+    pub policy_mode:           String,
+    pub ui_dir:                PathBuf,
+    pub events_dir:            PathBuf,
+    pub sessions_dir:          PathBuf,
+    pub histories:             Arc<Mutex<HashMap<SessionId, Vec<CoreMessage>>>>,
+    pub next_session_id:       Arc<AtomicU64>,
+    /// Shared secret for /sensor-bridge WS connections. Empty = no auth required.
+    pub sensor_bridge_token:   Arc<String>,
 }
 
 pub fn router(state: GatewayState) -> Router {
     Router::new()
-        .route("/ws",           get(ws_handler))
-        .route("/api/status",   get(status_handler))
+        .route("/ws",              get(ws_handler))
+        .route("/sensor-bridge",   get(sensor_bridge_ws_handler))
+        .route("/api/status",      get(status_handler))
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
         .route("/api/power",              post(power_handler))
@@ -132,6 +135,43 @@ async fn handle_socket(socket: WebSocket, state: GatewayState) {
         _ = read  => {}
         _ = write => {}
     }
+}
+
+// ── Sensor bridge WS ─────────────────────────────────────────────────────────
+
+async fn sensor_bridge_ws_handler(
+    ws:              WebSocketUpgrade,
+    Query(params):   Query<HashMap<String, String>>,
+    State(state):    State<GatewayState>,
+) -> Response {
+    let expected = state.sensor_bridge_token.as_str();
+    if !expected.is_empty() {
+        let provided = params.get("token").map(|s| s.as_str()).unwrap_or("");
+        if provided != expected {
+            return (StatusCode::UNAUTHORIZED, "invalid sensor bridge token").into_response();
+        }
+    }
+    ws.on_upgrade(move |socket| handle_sensor_bridge(socket, state))
+       .into_response()
+}
+
+async fn handle_sensor_bridge(socket: WebSocket, state: GatewayState) {
+    let (_, mut stream) = socket.split();
+    eprintln!("[sensor-bridge] node connected");
+    while let Some(Ok(msg)) = stream.next().await {
+        if let Message::Text(text) = msg {
+            match serde_json::from_str::<Event>(&text) {
+                Ok(event) => {
+                    if let Event::SensorReading { ref node_id, ref reading, .. } = event {
+                        eprintln!("[sensor-bridge] {node_id}: {reading:?}");
+                    }
+                    state.bus.emit(event).await;
+                }
+                Err(e) => eprintln!("[sensor-bridge] parse error: {e} — raw: {text}"),
+            }
+        }
+    }
+    eprintln!("[sensor-bridge] node disconnected");
 }
 
 fn make_session_init(session_id: u64, history: &[CoreMessage]) -> String {

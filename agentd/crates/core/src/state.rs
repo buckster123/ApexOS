@@ -77,6 +77,8 @@ impl SystemState {
             // Routing signal handled by the async layer; state just records intent.
             Event::SpawnAgent { .. } => {}
 
+            Event::SensorReading { .. } => {}
+
             Event::Error { .. } => {}
 
             // Evolution events are handled by the async evolution layer.

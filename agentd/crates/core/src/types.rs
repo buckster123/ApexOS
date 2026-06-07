@@ -73,6 +73,20 @@ pub enum EvolutionProposal {
     },
 }
 
+// ── Sensor types ─────────────────────────────────────────────────────────────
+
+/// A reading from one sensor. The `kind` field is the serde discriminant tag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SensorReading {
+    Temperature { celsius: f32, sensor_id: String },
+    Humidity    { percent: f32, sensor_id: String },
+    Pressure    { hpa: f32,     sensor_id: String },
+    Motion      { detected: bool, sensor_id: String },
+    Distance    { cm: f32,      sensor_id: String },
+    GpioLevel   { pin: u8, high: bool },
+}
+
 // ── The central event enum ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +120,10 @@ pub enum Event {
         prompt:  String,
         system:  Option<String>,
     },
+
+    // ── sensor bridge ─────────────────────────────────────
+    /// Emitted by the /sensor-bridge WS handler when a body-pi node sends data.
+    SensorReading { node_id: String, reading: SensorReading, timestamp: u64 },
 
     // ── system ────────────────────────────────────────────
     Error { session: Option<SessionId>, message: String },
