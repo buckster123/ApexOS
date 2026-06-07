@@ -13,6 +13,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::AbortHandle;
 
+fn load_soul() -> String {
+    let path = std::env::var("AGENTD_SOUL")
+        .unwrap_or_else(|_| "/etc/agentd/soul.md".into());
+    match std::fs::read_to_string(&path) {
+        Ok(s) if !s.trim().is_empty() => { eprintln!("[agentd] soul loaded from {path}"); s }
+        _ => {
+            // Fall back to config/soul.md next to the binary (dev mode)
+            let dev = std::env::var("AGENTD_SOUL_DEV")
+                .unwrap_or_else(|_| "config/soul.md".into());
+            match std::fs::read_to_string(&dev) {
+                Ok(s) if !s.trim().is_empty() => { eprintln!("[agentd] soul loaded from {dev}"); s }
+                _ => { eprintln!("[agentd] soul.md not found — running without system prompt"); String::new() }
+            }
+        }
+    }
+}
+
 fn load_api_key() -> String {
     // 1. Environment variable (set by systemd EnvironmentFile or shell)
     if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
@@ -92,8 +109,10 @@ async fn main() -> anyhow::Result<()> {
     let engine: Arc<TurnEngine> = Arc::new(TurnEngine::new(
         AnthropicProvider::new_shared(Arc::clone(&api_key_arc), Arc::clone(&model_arc)),
         16,
-        None,
+        Some(load_soul()),
     ));
+    // soul_arc: Phase 2 evolution handler writes here to hot-swap the system prompt
+    let _soul_arc = engine.system_arc();
 
     // Shared state for the agent router
     let tool_reg: Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>> =

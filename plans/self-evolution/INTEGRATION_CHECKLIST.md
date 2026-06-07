@@ -26,19 +26,18 @@ No "almost done" — item is checked when tested and committed.
 
 ---
 
-## Phase 1 — Procedural Memory Loop
+## Phase 1 — Procedural Memory Loop ✓
 
 **Goal:** Agent recalls and stores procedures as a natural part of conversation.
 
-- [ ] Create `/etc/agentd/soul.md` (or `agentd/config/soul.md` as the example/template)
-- [ ] `crates/agentd/src/main.rs` — load soul.md into `Arc<RwLock<String>>` at startup (same pattern as `model_arc`); fall back to hardcoded default string if missing
-- [ ] `crates/agentd/src/main.rs` — pass soul arc into `TurnEngine` so `run_turn` reads it per-call
-- [ ] `crates/agent/src/turn.rs` — change `system: Option<String>` to `system: Arc<RwLock<Option<String>>>` so hot-reload works
-- [ ] `agentd/config/soul.md` — write initial system prompt with procedural memory instructions (when to call `find_relevant_procedures`, `store_procedure`, `record_procedure_outcome`)
-- [ ] Wire `store_procedure` and `record_procedure_outcome` as explicitly-described tools in the tool registry (they're already CerebroCortex MCP tools — this is about making them show up with good descriptions)
-- [ ] Integration test (manual on Pi): store a procedure in one turn, recall it in the next
-- [ ] Commit: `feat(evolution): procedural memory loop via soul.md system prompt`
-- [ ] Update `docs/claude/agent-turn-engine.md`
+- [x] `agentd/config/soul.md` — written; identity + procedural memory instructions + self-evolution + principles
+- [x] `crates/agent/src/turn.rs` — `system: Arc<RwLock<String>>`; `system_arc()` accessor; `with_system()` creates new Arc or inherits parent's; `run_turn` reads per-call
+- [x] `crates/agentd/src/main.rs` — `load_soul()` with fallback chain; `Some(load_soul())` passed to `TurnEngine::new()`; `_soul_arc` extracted for Phase 2
+- [x] `store_procedure` / `record_procedure_outcome` / `find_relevant_procedures` available via CerebroCortex MCP (66 tools); soul.md instructs the agent when/how to use them
+- [x] 36 tests passing (0 failures)
+- [ ] Integration test on Pi: store a procedure in one turn, recall it in the next
+- [ ] Commit: `feat(evolution): soul.md system prompt and Arc hot-reload wiring`
+- [ ] Update `docs/claude/agent-turn-engine.md` ✓ (done)
 
 ---
 

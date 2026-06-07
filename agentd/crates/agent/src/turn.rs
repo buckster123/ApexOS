@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{broadcast, RwLock, Semaphore};
 use apexos_core::{
     ActionId, ContentBlock, Event, BusHandle, Message, SessionId,
     ToolCall, ToolOutput, ToolSpec,
@@ -11,7 +11,8 @@ use crate::provider::{Chunk, Provider};
 pub struct TurnEngine {
     pub provider: Arc<dyn Provider>,
     pub sem:      Arc<Semaphore>,
-    pub system:   Option<String>,
+    // Arc<RwLock<>> so soul.md hot-reloads (Phase 2) without restarting the daemon.
+    system:       Arc<RwLock<String>>,
 }
 
 impl TurnEngine {
@@ -23,18 +24,23 @@ impl TurnEngine {
         Self {
             provider: Arc::new(provider),
             sem:      Arc::new(Semaphore::new(max_concurrent)),
-            system,
+            system:   Arc::new(RwLock::new(system.unwrap_or_default())),
         }
     }
 
+    /// Returns the Arc so callers can hot-swap the system prompt (Phase 2).
+    pub fn system_arc(&self) -> Arc<RwLock<String>> { Arc::clone(&self.system) }
+
     /// Derive an engine variant with a different system prompt.
+    /// - None  → child inherits the parent's Arc (shares soul hot-reloads)
+    /// - Some  → child gets its own isolated Arc (explicit sub-agent override)
     /// Shares the same provider and semaphore so concurrency limits apply globally.
     pub fn with_system(&self, system: Option<String>) -> Self {
-        Self {
-            provider: self.provider.clone(),
-            sem:      self.sem.clone(),
-            system,
-        }
+        let system = match system {
+            Some(s) => Arc::new(RwLock::new(s)),
+            None    => Arc::clone(&self.system),
+        };
+        Self { provider: self.provider.clone(), sem: self.sem.clone(), system }
     }
 }
 
@@ -58,8 +64,10 @@ pub async fn run_turn(
         // Bound concurrent API calls — released when _permit drops at end of loop body.
         let _permit = engine.sem.acquire().await?;
 
+        let system_str = engine.system.read().await.clone();
+        let system_opt = if system_str.is_empty() { None } else { Some(system_str.as_str()) };
         let mut stream = engine.provider
-            .messages_stream(&history, &tools, engine.system.as_deref())
+            .messages_stream(&history, &tools, system_opt)
             .await?;
 
         let mut assistant_blocks: Vec<ContentBlock> = Vec::new();

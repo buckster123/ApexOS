@@ -8,6 +8,7 @@
 - [x] Semaphore capping concurrent API calls
 - [x] Tool request → bus event → tool result → continue loop
 - [x] `Provider` trait for multi-provider support (OpenRouter slot-in ready)
+- [x] `soul.md` system prompt loaded at startup into `Arc<RwLock<String>>`; hot-reload-ready (Phase 2)
 
 ## File layout
 ```
@@ -56,6 +57,18 @@ Permit acquired before each streaming call, released when the round-trip complet
 ## Tool dispatch timing
 Subscribe to broadcast BEFORE emitting `ToolRequested` to avoid missing results
 that arrive before the receiver is set up.
+
+## System prompt (soul.md)
+
+`TurnEngine.system` is `Arc<RwLock<String>>` (not `Option<String>`).
+- `new(provider, max, Some(soul_content))` — wraps in Arc, ready to hot-swap
+- `system_arc()` — returns clone of the Arc; Phase 2 evolution handler writes here
+- `with_system(None)` — child inherits parent's Arc (sub-agents share soul)
+- `with_system(Some(s))` — child gets isolated Arc (explicit override, unaffected by hot-reloads)
+
+Load order: `AGENTD_SOUL` env → `/etc/agentd/soul.md` → `config/soul.md` (dev) → empty (no system prompt).
+
+`run_turn` reads the string each call: `.read().await.clone()` → pass as `Option<&str>` to `messages_stream`.
 
 ## main.rs wiring
 - `Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>>` — updated on PluginUp/PluginDown
