@@ -114,10 +114,11 @@ No "almost done" — item is checked when tested and committed.
 - [x] All subsequent frames from client have server's session_id injected (client field ignored) — two clients with same session_id share one live session
 - [x] next_session_id starts above max(loaded_ids) to avoid collision with restored sessions; verified on Pi (restored 2 sessions, counter started at 3219194174)
 
-### 5c — UI
-- [ ] `app.js`: send hello frame on connect with localStorage session ID; handle `session_init` to pre-populate chat history
-- [ ] Session picker modal: list recent sessions from `/api/sessions`, click to resume; keyboard shortcut
-- [ ] New session = clear localStorage session ID → server issues fresh ID
+### 5c — UI ✓
+- [x] `app.js`: send hello frame on connect with localStorage session ID; handle `session_init` to pre-populate chat history; `SESSION_ID` now server-assigned (null until session_init arrives); filter updated for null SESSION_ID
+- [x] Session picker modal (Ctrl+Shift+S / SESSIONS badge in header): fetches `/api/sessions`, renders list with preview/count/relative-time; click row sends hello+resume; "New session" button in footer
+- [x] History replay: `renderHistory` iterates msg array; user messages render as user bubbles; assistant messages render text blocks + collapsed ✓ tool calls
+- [x] New session (Ctrl+K / ⊕): clears `apexos_session_id` from localStorage, sets `voluntaryClose=true`, closes WS — reconnect sends bare hello → server issues fresh ID
 
 ---
 

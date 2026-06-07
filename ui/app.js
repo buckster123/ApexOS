@@ -10,7 +10,7 @@ const MODELS = [
 ];
 
 // ─── State ───────────────────────────────────────────────────────────────────
-let SESSION_ID   = Math.floor(Math.random() * 2 ** 32);
+let SESSION_ID   = null;   // assigned by server via session_init
 let ws           = null;
 let reconnectIdx = 0;
 let reconnTimer  = null;
@@ -18,6 +18,7 @@ let activeTurn   = null;   // { turnEl, agentBlock, cursor }
 let bootDone     = false;
 let sessionTurns = [];     // { ts, user, agent } — saved on new session
 let evoCount     = 0;      // evolutions applied since page load
+let voluntaryClose = false; // true when newSession() intentionally closes WS
 
 // ─── Boot sequence ────────────────────────────────────────────────────────────
 const LOGO = [
@@ -109,6 +110,12 @@ function connect() {
     reconnectIdx = 0;
     setStatus('ok', 'CONNECTED');
     updateBootLine(document.getElementById('boot-lines'), 'GATEWAY', 'ok');
+    // Send hello to resume prior session or get a fresh server-assigned ID
+    const storedId = localStorage.getItem('apexos_session_id');
+    const hello = storedId
+      ? { type: 'hello', resume_session: Number(storedId) }
+      : { type: 'hello' };
+    ws.send(JSON.stringify(hello));
     if (bootDone) {
       enableInput(true);
       showSysMsg('reconnected');
@@ -123,10 +130,11 @@ function connect() {
   ws.onclose = ws.onerror = () => {
     setStatus('err', 'DISCONNECTED');
     enableInput(false);
-    if (bootDone) {
+    if (bootDone && !voluntaryClose) {
       onTurnComplete();
       showSysMsg('connection lost — reconnecting...');
     }
+    voluntaryClose = false;
     scheduleReconnect();
   };
 }
@@ -145,9 +153,10 @@ function sendWs(obj) {
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
   // null means daemon-scoped (e.g. evolution errors); undefined means broadcast to all sessions.
-  if (ev.session != null && ev.session !== SESSION_ID) return;
+  if (SESSION_ID !== null && ev.session != null && ev.session !== SESSION_ID) return;
 
   switch (ev.type) {
+    case 'session_init':        onSessionInit(ev);        break;
     case 'agent_text':          onAgentText(ev);          break;
     case 'turn_complete':       onTurnComplete();          break;
     case 'tool_requested':      onToolRequested(ev);      break;
@@ -378,6 +387,127 @@ function onAgentError(ev) {
   scrollDown();
 }
 
+// ─── Session resume ───────────────────────────────────────────────────────────
+function onSessionInit(ev) {
+  if (activeTurn) { activeTurn.cursor.remove(); activeTurn = null; }
+  setCancelVisible(false);
+  SESSION_ID = ev.session_id;
+  localStorage.setItem('apexos_session_id', String(ev.session_id));
+  if (ev.history && ev.history.length > 0) {
+    renderHistory(ev.history);
+  }
+}
+
+function renderHistory(messages) {
+  const output = document.getElementById('output');
+  output.innerHTML = '';
+  sessionTurns = [];
+  for (const msg of messages) {
+    if (msg.role === 'user')           renderHistoryUser(msg);
+    else if (msg.role === 'assistant') renderHistoryAssistant(msg);
+  }
+  scrollDown();
+}
+
+function renderHistoryUser(msg) {
+  const text = (msg.content || [])
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+  if (!text) return;
+  const turnEl   = document.createElement('div');
+  turnEl.className = 'turn';
+  const userLine   = document.createElement('div');
+  userLine.className   = 'user-line';
+  userLine.dataset.time = '';
+  userLine.textContent = text;
+  turnEl.appendChild(userLine);
+  document.getElementById('output').appendChild(turnEl);
+}
+
+function renderHistoryAssistant(msg) {
+  const content = msg.content || [];
+  const turnEl  = document.createElement('div');
+  turnEl.className = 'turn';
+
+  const textParts = content.filter(b => b.type === 'text' && b.text).map(b => b.text);
+  if (textParts.length > 0) {
+    const agentBlock = document.createElement('div');
+    agentBlock.className = 'agent-block';
+    agentBlock.textContent = textParts.join('');
+    turnEl.appendChild(agentBlock);
+  }
+
+  for (const block of content) {
+    if (block.type === 'tool_use') {
+      const toolEl   = makeToolCallEl(block.id, block.name, block.input || {});
+      const statusEl = toolEl.querySelector('.tool-status');
+      if (statusEl) { statusEl.className = 'tool-status ok'; statusEl.textContent = '✓'; }
+      turnEl.appendChild(toolEl);
+    }
+  }
+
+  if (turnEl.children.length > 0) {
+    document.getElementById('output').appendChild(turnEl);
+  }
+}
+
+// ─── Session picker modal ─────────────────────────────────────────────────────
+async function showSessionModal() {
+  const content = document.getElementById('sessions-content');
+  content.innerHTML = '<div class="session-empty">Loading...</div>';
+  document.getElementById('sessions-modal').classList.remove('hidden');
+
+  try {
+    const res  = await fetch('/api/sessions');
+    const data = await res.json();
+    content.innerHTML = '';
+
+    if (!Array.isArray(data) || data.length === 0) {
+      content.innerHTML = '<div class="session-empty">No saved sessions yet.</div>';
+      return;
+    }
+
+    for (const s of data) {
+      const item    = document.createElement('div');
+      item.className = 'session-item';
+      if (s.session_id === SESSION_ID) item.classList.add('active');
+
+      const preview = s.preview || '(empty)';
+      const count   = s.message_count || 0;
+      const rel     = relativeTime(s.last_active);
+
+      item.innerHTML =
+        `<div class="session-preview">${esc(preview)}` +
+        (s.session_id === SESSION_ID ? ' <span class="session-current">current</span>' : '') +
+        `</div>` +
+        `<div class="session-meta">${count} messages · ${rel}</div>`;
+
+      item.addEventListener('click', () => {
+        hideSessionModal();
+        sendWs({ type: 'hello', resume_session: s.session_id });
+      });
+
+      content.appendChild(item);
+    }
+  } catch {
+    content.innerHTML =
+      '<div class="session-empty" style="color:var(--error)">Failed to load sessions.</div>';
+  }
+}
+
+function hideSessionModal() {
+  document.getElementById('sessions-modal').classList.add('hidden');
+}
+
+function relativeTime(secs) {
+  const diff = Math.floor(Date.now() / 1000 - secs);
+  if (diff < 60)    return 'just now';
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 // ─── Cancel ───────────────────────────────────────────────────────────────────
 function cancelTurn() {
   if (!activeTurn) return;
@@ -394,24 +524,18 @@ function setCancelVisible(on) {
 
 // ─── New session ──────────────────────────────────────────────────────────────
 function newSession() {
-  // Save current session turns to localStorage before clearing
-  if (sessionTurns.length > 0) {
-    try {
-      const history = JSON.parse(localStorage.getItem('apexos_history') || '[]');
-      history.push({ ts: Date.now(), turns: sessionTurns });
-      if (history.length > 10) history.shift();
-      localStorage.setItem('apexos_history', JSON.stringify(history));
-    } catch { /* storage full or unavailable */ }
-  }
-
-  SESSION_ID   = Math.floor(Math.random() * 2 ** 32);
+  // Drop the stored session ID so the server assigns a fresh one on reconnect
+  localStorage.removeItem('apexos_session_id');
+  SESSION_ID   = null;
   sessionTurns = [];
   if (activeTurn) { activeTurn.cursor.remove(); activeTurn = null; }
   setCancelVisible(false);
 
   document.getElementById('output').innerHTML = '';
-  showSysMsg(`new session  ${SESSION_ID.toString(16).toUpperCase()}`);
-  enableInput(ws?.readyState === WebSocket.OPEN);
+  showSysMsg('new session...');
+  // Reconnect — server will issue a fresh session_id via session_init
+  voluntaryClose = true;
+  if (ws) ws.close(); else scheduleReconnect();
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -774,6 +898,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target === document.getElementById('evo-modal')) hideEvoModal();
   });
 
+  // Session picker: click #hdr-sessions badge
+  document.getElementById('hdr-sessions').addEventListener('click', showSessionModal);
+  document.getElementById('sessions-close-btn').addEventListener('click', hideSessionModal);
+  document.getElementById('sessions-new-btn').addEventListener('click', () => {
+    hideSessionModal(); newSession();
+  });
+  document.getElementById('sessions-modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('sessions-modal')) hideSessionModal();
+  });
+
   // Collapse all tools on hdr-center click (also shows tool count)
   document.getElementById('hdr-center').addEventListener('click', collapseAllTools);
 
@@ -782,6 +916,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') {
       if (!document.getElementById('power-modal').classList.contains('hidden')) {
         hidePowerModal(); return;
+      }
+      if (!document.getElementById('sessions-modal').classList.contains('hidden')) {
+        hideSessionModal(); return;
       }
       if (!document.getElementById('history-modal').classList.contains('hidden')) {
         document.getElementById('history-modal').classList.add('hidden'); return;
@@ -794,6 +931,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       newSession();
+    }
+    if (e.key === 'S' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+      e.preventDefault();
+      showSessionModal();
     }
     if (e.key === 'E' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
       e.preventDefault();

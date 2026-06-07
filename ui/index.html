@@ -44,6 +44,7 @@
           <option value="claude-haiku-4-5">HAIKU 4.5</option>
         </select>
         <span id="hdr-evo" class="hidden" title="Evolution history (Ctrl+Shift+E)"></span>
+        <span id="hdr-sessions" title="Session picker (Ctrl+Shift+S)">SESSIONS</span>
         <span id="policy-badge" class="policy-badge" title="Policy mode"></span>
         <span id="hdr-status">
           <span id="ws-dot">●</span>
@@ -63,7 +64,7 @@
       <button id="send-btn" disabled>SEND</button>
       <button id="new-session-btn" title="New session (Ctrl+K)">⊕</button>
     </div>
-    <div id="shortcuts-bar">Enter&nbsp;send · Esc&nbsp;cancel · Ctrl+K&nbsp;new&nbsp;session · Ctrl+Shift+E&nbsp;evolutions</div>
+    <div id="shortcuts-bar">Enter&nbsp;send · Esc&nbsp;cancel · Ctrl+K&nbsp;new · Ctrl+Shift+S&nbsp;sessions · Ctrl+Shift+E&nbsp;evolutions</div>
   </div>
 
   <!-- ─── Power modal ─────────────────────────────────────────────────── -->
@@ -98,6 +99,20 @@
         <button id="evo-close-btn">✕</button>
       </div>
       <div id="evo-content"></div>
+    </div>
+  </div>
+
+  <!-- ─── Sessions modal ────────────────────────────────────────────────── -->
+  <div id="sessions-modal" class="hidden">
+    <div id="sessions-modal-inner">
+      <div id="sessions-modal-header">
+        <span>SESSIONS</span>
+        <button id="sessions-close-btn">✕</button>
+      </div>
+      <div id="sessions-content"></div>
+      <div id="sessions-footer">
+        <button id="sessions-new-btn">⊕ NEW SESSION</button>
+      </div>
     </div>
   </div>
 
