@@ -17,6 +17,7 @@ let reconnTimer  = null;
 let activeTurn   = null;   // { turnEl, agentBlock, cursor }
 let bootDone     = false;
 let sessionTurns = [];     // { ts, user, agent } — saved on new session
+let evoCount     = 0;      // evolutions applied since page load
 
 // ─── Boot sequence ────────────────────────────────────────────────────────────
 const LOGO = [
@@ -143,16 +144,20 @@ function sendWs(obj) {
 
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
-  if (ev.session !== undefined && ev.session !== SESSION_ID) return;
+  // null means daemon-scoped (e.g. evolution errors); undefined means broadcast to all sessions.
+  if (ev.session != null && ev.session !== SESSION_ID) return;
 
   switch (ev.type) {
-    case 'agent_text':       onAgentText(ev);       break;
-    case 'turn_complete':    onTurnComplete();       break;
-    case 'tool_requested':   onToolRequested(ev);   break;
-    case 'tool_result':      onToolResult(ev);      break;
-    case 'approval_pending': onApprovalPending(ev); break;
-    case 'plugin_up':        onPluginUp(ev);        break;
-    case 'plugin_down':      onPluginDown(ev);      break;
+    case 'agent_text':          onAgentText(ev);          break;
+    case 'turn_complete':       onTurnComplete();          break;
+    case 'tool_requested':      onToolRequested(ev);      break;
+    case 'tool_result':         onToolResult(ev);         break;
+    case 'approval_pending':    onApprovalPending(ev);    break;
+    case 'plugin_up':           onPluginUp(ev);           break;
+    case 'plugin_down':         onPluginDown(ev);         break;
+    case 'evolution_proposed':  onEvolutionProposed(ev);  break;
+    case 'evolution_applied':   onEvolutionApplied(ev);   break;
+    case 'error':               onAgentError(ev);          break;
   }
 }
 
@@ -338,6 +343,41 @@ function refreshToolCount() {
   document.getElementById('hdr-center').textContent = total ? `${total} tools` : '';
 }
 
+// ─── Evolution events ─────────────────────────────────────────────────────────
+function onEvolutionProposed(ev) {
+  if (!bootDone) return;
+  const kind = ev.proposal?.kind || 'unknown';
+  showSysMsg(`evolution proposed: ${kind.replace(/_/g, ' ')}`);
+}
+
+function onEvolutionApplied(ev) {
+  const kind    = ev.proposal?.kind || 'unknown';
+  const summary = ev.patch_summary  || '';
+
+  const banner = document.createElement('div');
+  banner.className = 'evo-banner';
+  banner.innerHTML =
+    `<span class="evo-tag">EVOLVED</span>` +
+    `<span class="evo-kind">${esc(kind.replace(/_/g, ' '))}</span>` +
+    `<span class="evo-summary">${esc(summary)}</span>`;
+  document.getElementById('output').appendChild(banner);
+  scrollDown();
+
+  evoCount++;
+  const badge = document.getElementById('hdr-evo');
+  badge.textContent = `Σ${evoCount}`;
+  badge.classList.remove('hidden');
+}
+
+function onAgentError(ev) {
+  const d = document.createElement('div');
+  d.className   = 'sys-msg';
+  d.textContent = `error: ${ev.message}`;
+  d.style.color = 'var(--error)';
+  document.getElementById('output').appendChild(d);
+  scrollDown();
+}
+
 // ─── Cancel ───────────────────────────────────────────────────────────────────
 function cancelTurn() {
   if (!activeTurn) return;
@@ -412,6 +452,45 @@ function showHistory() {
   }
 
   document.getElementById('history-modal').classList.remove('hidden');
+}
+
+// ─── Evolution history modal ──────────────────────────────────────────────────
+async function showEvoModal() {
+  const content = document.getElementById('evo-content');
+  content.innerHTML = '<div class="evo-empty">Loading...</div>';
+  document.getElementById('evo-modal').classList.remove('hidden');
+
+  try {
+    const res  = await fetch('/api/evolution/history');
+    const data = await res.json();
+    content.innerHTML = '';
+
+    if (!Array.isArray(data) || data.length === 0) {
+      content.innerHTML = '<div class="evo-empty">No evolutions applied yet.</div>';
+      return;
+    }
+
+    for (const ev of [...data].reverse()) {
+      const kind    = ev.proposal?.kind || 'unknown';
+      const summary = ev.patch_summary  || '';
+      const item    = document.createElement('div');
+      item.className = 'evo-item';
+      item.innerHTML =
+        `<div class="evo-item-header">` +
+        `<span class="evo-tag">EVOLVED</span>` +
+        `<span class="evo-item-kind">${esc(kind.replace(/_/g, ' '))}</span>` +
+        `</div>` +
+        `<div class="evo-item-summary">${esc(summary)}</div>`;
+      content.appendChild(item);
+    }
+  } catch {
+    content.innerHTML =
+      '<div class="evo-empty" style="color:var(--error)">Failed to load history.</div>';
+  }
+}
+
+function hideEvoModal() {
+  document.getElementById('evo-modal').classList.add('hidden');
 }
 
 // ─── Power modal ──────────────────────────────────────────────────────────────
@@ -688,6 +767,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Evolution history: click evo counter badge
+  document.getElementById('hdr-evo').addEventListener('click', showEvoModal);
+  document.getElementById('evo-close-btn').addEventListener('click', hideEvoModal);
+  document.getElementById('evo-modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('evo-modal')) hideEvoModal();
+  });
+
   // Collapse all tools on hdr-center click (also shows tool count)
   document.getElementById('hdr-center').addEventListener('click', collapseAllTools);
 
@@ -700,11 +786,18 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!document.getElementById('history-modal').classList.contains('hidden')) {
         document.getElementById('history-modal').classList.add('hidden'); return;
       }
+      if (!document.getElementById('evo-modal').classList.contains('hidden')) {
+        hideEvoModal(); return;
+      }
       if (activeTurn) { cancelTurn(); return; }
     }
     if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       newSession();
+    }
+    if (e.key === 'E' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+      e.preventDefault();
+      showEvoModal();
     }
   });
 

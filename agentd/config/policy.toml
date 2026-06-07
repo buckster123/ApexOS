@@ -22,7 +22,8 @@ mode = "suggest"
 "cerebro.*"   = "allow"        # memory ops are safe
 "net.*"       = "ask"
 "agent.spawn"       = "ask"    # gate sub-agent fan-out / depth
-"propose_evolution" = "ask"    # structural changes require explicit user approval before apply
+"propose_evolution"  = "ask"    # structural changes require explicit user approval before apply
+"rollback_evolution" = "ask"    # rollback is destructive — always confirm
 
 # Optional knobs for the multi-agent layer (wire in §8):
 [subagents]

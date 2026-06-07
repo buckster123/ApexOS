@@ -61,19 +61,24 @@ No "almost done" — item is checked when tested and committed.
 - [x] Commit: `feat(evolution): config evolution and hot-reload`
 - [x] Update `docs/claude/plugin-supervisor.md`
 
-**Deferred to Phase 3:**
-- [ ] Rollback tool (`rollback_evolution`) with Cerebro episode snapshot/restore
-- [ ] Cerebro episode wrapping around each apply
+**Deferred to Phase 4:**
+- [ ] Cerebro episode wrapping around each apply (episode_start/add_step/episode_end)
 - [ ] Full RegisterMcpServer end-to-end test with a real new plugin
 
 ---
 
-## Phase 3 — Polish + Self-Observation
+## Phase 3 — Polish + Self-Observation ✓
 
-- [ ] Frontend: display `EvolutionProposed` / `EvolutionApplied` events in output (already streams — just add rendering in `app.js`)
-- [ ] Frontend: evolution history panel (reuses history modal pattern)
-- [ ] `crates/gateway/src/lib.rs` — add `/api/evolution/history` endpoint (reads JSONL log filtered to evolution events)
-- [ ] Self-update loop: agent proposes `UpdateSystemPrompt` after discovering improved phrasing → user approves → new soul.md
+- [x] Frontend: `EvolutionProposed` → subtle sys-msg; `EvolutionApplied` → green EVOLVED banner in output stream
+- [x] Frontend: evolution history modal (Ctrl+Shift+E or Σ badge in header; fetches `/api/evolution/history`)
+- [x] Frontend: `Error { session: null }` now rendered (fixed session filter `!== undefined` → `!= null`)
+- [x] `crates/gateway/src/lib.rs` — `/api/evolution/history` endpoint (reads JSONL log, filters `evolution_applied`)
+- [x] Rollback: `rollback_evolution` virtual tool + `rollback_evolution_spec()` + `"rollback_evolution" = "ask"` in policy
+- [x] Rollback: `compute_undo()` snapshots state before apply; stored in `rollback_store: Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>>`
+- [x] Rollback: supervisor `rollback_tx` / `set_rollback_tx()` channel routes tool call to applier
+- [x] Rollback: applier `select!` arm handles rollback_rx, applies undo proposal, emits `EvolutionRolledBack`
+- [x] All 37 tests pass (0 failures)
+- [ ] Self-update loop: agent proposes `UpdateSystemPrompt` after discovering improved phrasing (dogfood)
 - [ ] Metrics: `/api/evolution/stats` returning counts per variant, rollback rate
 - [ ] Update this checklist and CLAUDE.md via the evolution mechanism itself (dogfood)
 

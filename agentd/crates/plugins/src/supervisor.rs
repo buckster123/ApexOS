@@ -37,6 +37,8 @@ pub struct Supervisor {
     pending_approvals: HashMap<ActionId, PendingApproval>,
     sv_tx:             mpsc::Sender<SupervisorCmd>,
     sv_rx:             Option<mpsc::Receiver<SupervisorCmd>>,
+    /// Set by main.rs so rollback_evolution can route to the applier task.
+    rollback_tx:       Option<mpsc::Sender<(SessionId, ActionId, EvolutionId)>>,
 }
 
 impl Supervisor {
@@ -51,12 +53,18 @@ impl Supervisor {
             pending_approvals: HashMap::new(),
             sv_tx,
             sv_rx: Some(sv_rx),
+            rollback_tx:       None,
         }
     }
 
     /// Returns a sender that main.rs can use to send hot-reload commands.
     pub fn cmd_tx(&self) -> mpsc::Sender<SupervisorCmd> {
         self.sv_tx.clone()
+    }
+
+    /// Wires the rollback channel so `rollback_evolution` can reach the applier.
+    pub fn set_rollback_tx(&mut self, tx: mpsc::Sender<(SessionId, ActionId, EvolutionId)>) {
+        self.rollback_tx = Some(tx);
     }
 
     /// Boot all plugins from config then run the dispatch/supervision loop.
@@ -216,6 +224,55 @@ impl Supervisor {
                                 content: serde_json::json!(
                                     format!("invalid evolution proposal: {err}")
                                 ),
+                            },
+                        }).await;
+                    });
+                }
+            }
+            return;
+        }
+
+        // Virtual tool: rollback_evolution — routes to the applier via rollback channel.
+        if call.tool == "rollback_evolution" {
+            let evolution_id = call.args["evolution_id"].as_u64().map(EvolutionId);
+            let call_id      = call.id;
+            let bus          = self.bus.clone();
+            match (evolution_id, self.rollback_tx.as_ref()) {
+                (Some(eid), Some(tx)) => {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if tx.send((session, call_id, eid)).await.is_err() {
+                            bus.emit(Event::ToolResult {
+                                session,
+                                call: call_id,
+                                output: ToolOutput {
+                                    ok:      false,
+                                    content: serde_json::json!("rollback channel closed"),
+                                },
+                            }).await;
+                        }
+                    });
+                }
+                (None, _) => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput {
+                                ok:      false,
+                                content: serde_json::json!("missing evolution_id"),
+                            },
+                        }).await;
+                    });
+                }
+                (_, None) => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput {
+                                ok:      false,
+                                content: serde_json::json!("rollback not available"),
                             },
                         }).await;
                     });

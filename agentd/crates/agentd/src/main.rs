@@ -87,6 +87,9 @@ async fn main() -> anyhow::Result<()> {
     let ui_dir = PathBuf::from(
         std::env::var("AGENTD_UI").unwrap_or_else(|_| "ui".into())
     );
+    let log_dir = PathBuf::from(
+        std::env::var("AGENTD_LOG").unwrap_or_else(|_| "events".into())
+    );
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
         bus:         handle.clone(),
@@ -95,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         model:       Arc::clone(&model_arc),
         policy_mode: policy_mode_str,
         ui_dir,
+        events_dir:  log_dir.clone(),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -122,8 +126,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Supervisor — pass policy_arc so the evolution applier can hot-swap the engine.
-    let supervisor = Supervisor::new(handle.clone(), Arc::clone(&policy_arc));
-    let sv_cmd_tx  = supervisor.cmd_tx();
+    let mut supervisor = Supervisor::new(handle.clone(), Arc::clone(&policy_arc));
+    let sv_cmd_tx      = supervisor.cmd_tx();
+    // Rollback channel: applier receives (session, call_id, evolution_id) requests.
+    let (rollback_tx, rollback_rx) = mpsc::channel::<(SessionId, ActionId, EvolutionId)>(16);
+    supervisor.set_rollback_tx(rollback_tx);
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
     // Agent turn engine — shares key + model Arcs so browser UI changes take effect immediately
@@ -135,6 +142,10 @@ async fn main() -> anyhow::Result<()> {
     ));
     let soul_arc = engine.system_arc();
 
+    // Rollback store: undo snapshots indexed by EvolutionId (in-memory, cleared on restart).
+    let rollback_store: Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     // Evolution applier — subscribes to EvolutionProposed and applies changes live.
     spawn_evolution_applier(
         bcast.subscribe(),
@@ -145,6 +156,8 @@ async fn main() -> anyhow::Result<()> {
         plugins_path,
         Arc::clone(&policy_arc),
         sv_cmd_tx,
+        rollback_rx,
+        Arc::clone(&rollback_store),
     );
 
     // Shared state for the agent router
@@ -159,9 +172,6 @@ async fn main() -> anyhow::Result<()> {
                        tool_reg, histories, engine, max_depth);
 
     // Event log
-    let log_dir = PathBuf::from(
-        std::env::var("AGENTD_LOG").unwrap_or_else(|_| "events".into())
-    );
     tokio::spawn(run_log_writer(log_dir, bcast.subscribe()));
 
     eprintln!("[agentd] ready — gateway ws://0.0.0.0:8787/ws");
@@ -173,50 +183,176 @@ async fn main() -> anyhow::Result<()> {
 // ── evolution applier ─────────────────────────────────────────────────────────
 
 fn spawn_evolution_applier(
-    mut bus_rx:   broadcast::Receiver<Event>,
-    bus:          apexos_core::BusHandle,
-    soul_arc:     Arc<RwLock<String>>,
-    soul_path:    PathBuf,
-    policy_path:  PathBuf,
-    plugins_path: PathBuf,
-    policy_arc:   Arc<RwLock<PolicyEngine>>,
-    sv_cmd_tx:    mpsc::Sender<SupervisorCmd>,
+    mut bus_rx:      broadcast::Receiver<Event>,
+    bus:             apexos_core::BusHandle,
+    soul_arc:        Arc<RwLock<String>>,
+    soul_path:       PathBuf,
+    policy_path:     PathBuf,
+    plugins_path:    PathBuf,
+    policy_arc:      Arc<RwLock<PolicyEngine>>,
+    sv_cmd_tx:       mpsc::Sender<SupervisorCmd>,
+    mut rollback_rx: mpsc::Receiver<(SessionId, ActionId, EvolutionId)>,
+    rollback_store:  Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>>,
 ) {
     tokio::spawn(async move {
         loop {
-            match bus_rx.recv().await {
-                Ok(Event::EvolutionProposed { id, proposal, proposed_by: _ }) => {
-                    let proposal_copy = proposal.clone();
-                    let result = apply_evolution(
-                        id, proposal,
-                        &soul_arc, &soul_path, &policy_path, &plugins_path,
-                        &policy_arc, &sv_cmd_tx,
-                    ).await;
-                    match result {
-                        Ok(summary) => {
-                            eprintln!("[evolution] applied {:?}: {summary}", id);
-                            bus.emit(Event::EvolutionApplied {
-                                id,
-                                proposal:      proposal_copy,
-                                patch_summary: summary,
-                                applied_by:    None,
-                            }).await;
-                        }
-                        Err(e) => {
-                            eprintln!("[evolution] apply failed {:?}: {e}", id);
-                            bus.emit(Event::Error {
-                                session: None,
-                                message: format!("evolution {}: {e}", id.0),
-                            }).await;
+            tokio::select! {
+                result = bus_rx.recv() => match result {
+                    Ok(Event::EvolutionProposed { id, proposal, proposed_by: _ }) => {
+                        // Snapshot current state for rollback BEFORE applying.
+                        let undo = compute_undo(
+                            &proposal, &soul_arc, &soul_path, &policy_path, &plugins_path,
+                        ).await;
+
+                        let proposal_copy = proposal.clone();
+                        let result = apply_evolution(
+                            id, proposal,
+                            &soul_arc, &soul_path, &policy_path, &plugins_path,
+                            &policy_arc, &sv_cmd_tx,
+                        ).await;
+                        match result {
+                            Ok(summary) => {
+                                eprintln!("[evolution] applied {:?}: {summary}", id);
+                                if let Some(undo_proposal) = undo {
+                                    rollback_store.lock().await.insert(id, undo_proposal);
+                                }
+                                bus.emit(Event::EvolutionApplied {
+                                    id,
+                                    proposal:      proposal_copy,
+                                    patch_summary: summary,
+                                    applied_by:    None,
+                                }).await;
+                            }
+                            Err(e) => {
+                                eprintln!("[evolution] apply failed {:?}: {e}", id);
+                                bus.emit(Event::Error {
+                                    session: None,
+                                    message: format!("evolution {}: {e}", id.0),
+                                }).await;
+                            }
                         }
                     }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => break,
-                Ok(_)  => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                    Ok(_)  => {}
+                },
+
+                Some((session, call_id, evo_id)) = rollback_rx.recv() => {
+                    let undo = rollback_store.lock().await.remove(&evo_id);
+                    match undo {
+                        None => {
+                            bus.emit(Event::ToolResult {
+                                session,
+                                call:   call_id,
+                                output: ToolOutput {
+                                    ok:      false,
+                                    content: serde_json::json!(
+                                        format!("no rollback snapshot for evolution {}", evo_id.0)
+                                    ),
+                                },
+                            }).await;
+                        }
+                        Some(undo_proposal) => {
+                            let result = apply_evolution(
+                                evo_id, undo_proposal,
+                                &soul_arc, &soul_path, &policy_path, &plugins_path,
+                                &policy_arc, &sv_cmd_tx,
+                            ).await;
+                            match result {
+                                Ok(summary) => {
+                                    eprintln!("[evolution] rolled back {:?}: {summary}", evo_id);
+                                    bus.emit(Event::EvolutionRolledBack {
+                                        evolution_id:   evo_id,
+                                        reason:         "user requested rollback".into(),
+                                        rolled_back_by: Some(session),
+                                    }).await;
+                                    bus.emit(Event::ToolResult {
+                                        session,
+                                        call:   call_id,
+                                        output: ToolOutput {
+                                            ok:      true,
+                                            content: serde_json::json!({
+                                                "status":  "rolled_back",
+                                                "summary": summary,
+                                            }),
+                                        },
+                                    }).await;
+                                }
+                                Err(e) => {
+                                    eprintln!("[evolution] rollback failed {:?}: {e}", evo_id);
+                                    bus.emit(Event::ToolResult {
+                                        session,
+                                        call:   call_id,
+                                        output: ToolOutput {
+                                            ok:      false,
+                                            content: serde_json::json!(e.to_string()),
+                                        },
+                                    }).await;
+                                }
+                            }
+                        }
+                    }
+                },
             }
         }
     });
+}
+
+/// Snapshot current state to produce an inverse proposal (for rollback).
+/// Returns None for proposals that have no meaningful undo (e.g. HotReload).
+async fn compute_undo(
+    proposal:     &EvolutionProposal,
+    soul_arc:     &Arc<RwLock<String>>,
+    _soul_path:   &PathBuf,
+    policy_path:  &PathBuf,
+    plugins_path: &PathBuf,
+) -> Option<EvolutionProposal> {
+    match proposal {
+        EvolutionProposal::UpdateSystemPrompt { .. } => {
+            let old = soul_arc.read().await.clone();
+            Some(EvolutionProposal::UpdateSystemPrompt {
+                content: old,
+                reason:  "rollback".into(),
+            })
+        }
+        EvolutionProposal::UpdatePolicyRule { tool_pattern, .. } => {
+            let toml_text = tokio::fs::read_to_string(policy_path).await.ok()?;
+            let doc       = toml_text.parse::<toml_edit::DocumentMut>().ok()?;
+            let old_mode_str = doc.get("rules")?.as_table()?.get(tool_pattern.as_str())?.as_str()?;
+            let old_mode = match old_mode_str {
+                "auto-edit" => PolicyMode::AutoEdit,
+                "yolo"      => PolicyMode::Yolo,
+                _           => PolicyMode::Suggest,
+            };
+            Some(EvolutionProposal::UpdatePolicyRule {
+                tool_pattern: tool_pattern.clone(),
+                new_mode:     old_mode,
+                reason:       "rollback".into(),
+            })
+        }
+        EvolutionProposal::RegisterMcpServer { name, .. } => {
+            Some(EvolutionProposal::UnregisterMcpServer {
+                name:   name.clone(),
+                reason: "rollback".into(),
+            })
+        }
+        EvolutionProposal::UnregisterMcpServer { name, .. } => {
+            let toml_text = tokio::fs::read_to_string(plugins_path).await.ok()?;
+            let doc = toml_text.parse::<toml_edit::DocumentMut>().ok()?;
+            let arr = doc.get("plugin")?.as_array_of_tables()?;
+            let tbl = arr.iter().find(|t| {
+                t.get("id").and_then(|v| v.as_str()) == Some(name.as_str())
+            })?;
+            let cmd = tbl.get("cmd")?.as_str()?.to_string();
+            Some(EvolutionProposal::RegisterMcpServer {
+                name:    name.clone(),
+                command: cmd,
+                env:     std::collections::HashMap::new(),
+                reason:  "rollback".into(),
+            })
+        }
+        EvolutionProposal::HotReloadSubsystem { .. } => None,
+    }
 }
 
 async fn apply_evolution(
@@ -491,6 +627,7 @@ async fn gather_tools(
         .collect();
     tools.push(agent_spawn_spec());
     tools.push(propose_evolution_spec());
+    tools.push(rollback_evolution_spec());
     tools
 }
 
@@ -573,6 +710,29 @@ fn propose_evolution_spec() -> ToolSpec {
                 }
             },
             "required": ["kind", "reason"]
+        }),
+    }
+}
+
+fn rollback_evolution_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "rollback_evolution".into(),
+        description: "Revert a previously applied evolution by its ID. \
+                      Uses the in-memory undo snapshot taken at apply time. \
+                      Only available for evolutions applied in the current daemon session.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "evolution_id": {
+                    "type":        "integer",
+                    "description": "The numeric ID of the evolution to roll back (from EvolutionApplied event)."
+                },
+                "reason": {
+                    "type":        "string",
+                    "description": "Why this rollback is being requested."
+                }
+            },
+            "required": ["evolution_id", "reason"]
         }),
     }
 }

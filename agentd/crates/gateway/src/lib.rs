@@ -23,6 +23,7 @@ pub struct GatewayState {
     pub model:       Arc<RwLock<String>>,
     pub policy_mode: String,
     pub ui_dir:      PathBuf,
+    pub events_dir:  PathBuf,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -31,7 +32,8 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/status",   get(status_handler))
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
-        .route("/api/power",    post(power_handler))
+        .route("/api/power",              post(power_handler))
+        .route("/api/evolution/history",  get(evolution_history_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -181,6 +183,38 @@ async fn power_handler(
         }
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
     }
+}
+
+async fn evolution_history_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    let Ok(mut dir) = tokio::fs::read_dir(&state.events_dir).await else {
+        return Json(serde_json::json!([]));
+    };
+
+    // Collect matching filenames first so we can sort them.
+    let mut files: Vec<String> = Vec::new();
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("events-") && name.ends_with(".jsonl") {
+            files.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    files.sort();
+
+    for path in files {
+        let Ok(text) = tokio::fs::read_to_string(&path).await else { continue };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue }
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if val.get("type").and_then(|t| t.as_str()) == Some("evolution_applied") {
+                entries.push(val);
+            }
+        }
+    }
+
+    Json(serde_json::json!(entries))
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────
