@@ -48,6 +48,16 @@ mode = "suggest"
 "list_schedules"   = "allow"
 "cancel_schedule"  = "allow"
 
+# sensor-head — physical senses (proxy to dashboard REST, no direct I2C)
+"sense_environment" = "allow"
+"read_thermal"      = "allow"
+"sense_thermal"     = "allow"
+"capture_visual"    = "ask"
+"capture_night"     = "ask"
+"detect_objects"    = "allow"
+"classify_scene"    = "allow"
+"get_head_status"   = "allow"
+
 # Optional knobs for the multi-agent layer (wire in §8):
 [subagents]
 max_depth        = 4           # how deep the spawn tree may go
