@@ -1,0 +1,18 @@
+[Unit]
+Description=CerebroCortex REST API + dashboard (port 8767)
+After=network.target agentd.service
+# agentd owns the cerebro-mcp MCP process; this is a read-mostly companion API
+# Both share the same ChromaDB at ~/.cerebro-cortex — start after agentd so the
+# DB is already initialized before we add a second reader.
+
+[Service]
+Type=simple
+User=apexos
+Group=apexos
+ExecStart=/opt/cerebro-venv/bin/cerebro-api
+Restart=always
+RestartSec=10
+Environment=HOME=/home/apexos
+
+[Install]
+WantedBy=multi-user.target
