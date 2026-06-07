@@ -132,7 +132,7 @@ restart = "always"
 - [x] Copy binary: `sudo cp target/release/apexos-tools /usr/local/bin/`
 - [x] Register in `plugins.pi.toml` + policy rules in `policy.toml`; deployed to `/etc/agentd/`
 - [ ] Smoke test: ask agent to run `uname -a`, read `/etc/os-release`, fetch `https://httpbin.org/get`
-- [ ] Smoke test: ask agent to report its own CPU temp and disk usage
+- [x] Smoke test: agent self-reported vitals — uptime 22.6h, CPU 39.7°C, RAM 1121/4045MB used — all live on first turn after deploy
 - [ ] Verify denylist: `rm -rf /` attempt returns error (not executed)
 - [x] Commit: `feat(tools): apexos-tools MCP server — shell, fs, http, sysstat`
 
