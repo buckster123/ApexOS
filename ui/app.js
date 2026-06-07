@@ -325,7 +325,7 @@ function approvedBadge(toolName, granted) {
 }
 
 // ─── Plugin status ────────────────────────────────────────────────────────────
-const pluginCounts = {};
+window.pluginCounts = {};
 
 function onPluginUp(ev) {
   pluginCounts[ev.plugin] = (ev.tools || []).length;

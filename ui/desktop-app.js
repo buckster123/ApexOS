@@ -66,11 +66,11 @@ function openWin(id) {
   // Lazy-load iframes only when window opens
   if (id === 'cerebro') {
     const iframe = document.getElementById('cerebro-iframe');
-    if (iframe && !iframe.src) iframe.src = `http://${location.hostname}:8767/ui`;
+    if (iframe && !iframe.getAttribute('src')) iframe.src = `http://${location.hostname}:8767/ui`;
   }
   if (id === 'sensorhead') {
     const iframe = document.getElementById('sensorhead-iframe');
-    if (iframe && !iframe.src) iframe.src = `http://${location.hostname}:8080`;
+    if (iframe && !iframe.getAttribute('src')) iframe.src = `http://${location.hostname}:8080`;
   }
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
