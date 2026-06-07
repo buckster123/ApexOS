@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("[agentd] ANTHROPIC_API_KEY not set — enter via browser UI at :8787");
     }
     let api_key_arc = Arc::new(RwLock::new(api_key_str));
-    let model_arc   = Arc::new(RwLock::new("claude-opus-4-8".to_string()));
+    let model_arc   = Arc::new(RwLock::new("claude-sonnet-4-6".to_string()));
 
     // Load policy config early so gateway can expose the mode.
     let policy_path = PathBuf::from(
