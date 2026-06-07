@@ -93,16 +93,34 @@ async fn main() -> anyhow::Result<()> {
     let log_dir = PathBuf::from(
         std::env::var("AGENTD_LOG").unwrap_or_else(|_| "events".into())
     );
+
+    // Session store — init early so histories and next_session_id are ready for GatewayState.
+    let session_store = Arc::new(SessionStore::new(&log_dir));
+    session_store.init().await?;
+    let initial_histories = session_store.load_all().await;
+
+    // Server-issued session IDs — start above any IDs already loaded from disk.
+    let max_loaded_sid = initial_histories.keys().map(|s| s.0).max().unwrap_or(0);
+    let next_session_id = Arc::new(AtomicU64::new(max_loaded_sid + 1));
+
+    // Shared state for the agent router (created early — needed by GatewayState too).
+    let tool_reg: Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+    let histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>> =
+        Arc::new(Mutex::new(initial_histories));
+
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
-        bus:          handle.clone(),
-        bcast:        bcast.clone(),
-        api_key:      Arc::clone(&api_key_arc),
-        model:        Arc::clone(&model_arc),
-        policy_mode:  policy_mode_str,
+        bus:             handle.clone(),
+        bcast:           bcast.clone(),
+        api_key:         Arc::clone(&api_key_arc),
+        model:           Arc::clone(&model_arc),
+        policy_mode:     policy_mode_str,
         ui_dir,
-        events_dir:   log_dir.clone(),
-        sessions_dir: log_dir.join("sessions"),
+        events_dir:      log_dir.clone(),
+        sessions_dir:    log_dir.join("sessions"),
+        histories:       Arc::clone(&histories),
+        next_session_id: Arc::clone(&next_session_id),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -183,17 +201,6 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&rollback_store),
         tool_proxy,
     );
-
-    // Session store — append-only JSONL per session; restores history across daemon restarts.
-    let session_store = Arc::new(SessionStore::new(&log_dir));
-    session_store.init().await?;
-    let initial_histories = session_store.load_all().await;
-
-    // Shared state for the agent router
-    let tool_reg: Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-    let histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>> =
-        Arc::new(Mutex::new(initial_histories));
 
     // Subscribe before supervisor so no early PluginUp events are missed.
     let agent_rx = bcast.subscribe();

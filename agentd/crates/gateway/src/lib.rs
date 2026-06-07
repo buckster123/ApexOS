@@ -9,22 +9,26 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
-use apexos_core::{BusHandle, Event};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{broadcast, Mutex, RwLock};
+use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
 
 #[derive(Clone)]
 pub struct GatewayState {
-    pub bus:          BusHandle,
-    pub bcast:        broadcast::Sender<Event>,
-    pub api_key:      Arc<RwLock<String>>,
-    pub model:        Arc<RwLock<String>>,
-    pub policy_mode:  String,
-    pub ui_dir:       PathBuf,
-    pub events_dir:   PathBuf,
-    pub sessions_dir: PathBuf,
+    pub bus:              BusHandle,
+    pub bcast:            broadcast::Sender<Event>,
+    pub api_key:          Arc<RwLock<String>>,
+    pub model:            Arc<RwLock<String>>,
+    pub policy_mode:      String,
+    pub ui_dir:           PathBuf,
+    pub events_dir:       PathBuf,
+    pub sessions_dir:     PathBuf,
+    pub histories:        Arc<Mutex<HashMap<SessionId, Vec<CoreMessage>>>>,
+    pub next_session_id:  Arc<AtomicU64>,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -52,31 +56,74 @@ async fn ws_handler(
 
 async fn handle_socket(socket: WebSocket, state: GatewayState) {
     let mut rx = state.bcast.subscribe();
-    let (mut sink, mut stream) = socket.split();
+    let (mut sink, stream) = socket.split();
 
-    let bus = state.bus.clone();
-    let read = tokio::spawn(async move {
-        while let Some(Ok(msg)) = stream.next().await {
-            if let Message::Text(text) = msg {
-                if let Ok(event) = serde_json::from_str::<Event>(&text) {
-                    bus.emit(event).await;
+    // Priority channel: read task sends session_init frames; write task forwards them
+    // before anything from the broadcast. Capacity 8 is enough for the hello + one resume.
+    let (prio_tx, mut prio_rx) = tokio::sync::mpsc::channel::<String>(8);
+
+    // Assign a fresh session_id immediately — no blocking on hello.
+    let session_id = state.next_session_id.fetch_add(1, Ordering::SeqCst);
+
+    // Send initial session_init (empty history — new session) before write task starts.
+    let _ = prio_tx.send(make_session_init(session_id, &[])).await;
+
+    // Write task: drain priority channel first (biased), then relay broadcast events.
+    let write = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                Some(msg) = prio_rx.recv() => {
+                    if sink.send(Message::Text(msg.into())).await.is_err() { break; }
+                }
+                result = rx.recv() => match result {
+                    Ok(event) => {
+                        if let Ok(json) = serde_json::to_string(&event) {
+                            if sink.send(Message::Text(json.into())).await.is_err() { break; }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
                 }
             }
         }
     });
 
-    let write = tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    if let Ok(json) = serde_json::to_string(&event) {
-                        if sink.send(Message::Text(json.into())).await.is_err() {
-                            break;
+    // Read task: handle hello frames (session resume) and relay everything else as Events.
+    let bus      = state.bus.clone();
+    let histories = state.histories.clone();
+    let read = tokio::spawn(async move {
+        let mut stream   = stream;
+        let mut session_id = session_id;   // mutable — updated by hello
+
+        while let Some(Ok(msg)) = stream.next().await {
+            if let Message::Text(text) = msg {
+                let val: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if val["type"].as_str() == Some("hello") {
+                    // Client wants to resume an existing session.
+                    let resume = val["resume_session"].as_u64().map(SessionId);
+                    let hist = {
+                        let lock = histories.lock().await;
+                        match resume {
+                            Some(s) if lock.contains_key(&s) => {
+                                session_id = s.0;
+                                lock.get(&s).cloned().unwrap_or_default()
+                            }
+                            _ => vec![],  // keep current session_id
                         }
+                    };
+                    let _ = prio_tx.send(make_session_init(session_id, &hist)).await;
+                } else {
+                    // Regular frame — inject WS-bound session_id and emit as Event.
+                    let mut frame = val;
+                    frame["session"] = serde_json::json!(session_id);
+                    if let Ok(event) = serde_json::from_value::<Event>(frame) {
+                        bus.emit(event).await;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => break,
             }
         }
     });
@@ -85,6 +132,15 @@ async fn handle_socket(socket: WebSocket, state: GatewayState) {
         _ = read  => {}
         _ = write => {}
     }
+}
+
+fn make_session_init(session_id: u64, history: &[CoreMessage]) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "type":       "session_init",
+        "session_id": session_id,
+        "history":    history,
+    }))
+    .unwrap_or_default()
 }
 
 // ── Static file handler ───────────────────────────────────────────────────────
