@@ -39,6 +39,11 @@ mode = "suggest"
 "memory_info"  = "yolo"
 "uptime"       = "yolo"
 
+# scheduler — agent manages its own heartbeat
+"schedule_task"    = "yolo"
+"list_schedules"   = "yolo"
+"cancel_schedule"  = "yolo"
+
 # Optional knobs for the multi-agent layer (wire in §8):
 [subagents]
 max_depth        = 4           # how deep the spawn tree may go

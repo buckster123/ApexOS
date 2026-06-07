@@ -1,5 +1,7 @@
 mod session_store;
 use session_store::SessionStore;
+mod scheduler;
+use scheduler::{load_schedules, run_scheduler, spawn_scheduler_handler, SchedulerState};
 
 use apexos_core::{
     ActionId, Bus, ContentBlock, Event, EvolutionId, EvolutionProposal, Message,
@@ -196,11 +198,26 @@ async fn main() -> anyhow::Result<()> {
         policy_path,
         plugins_path,
         Arc::clone(&policy_arc),
-        sv_cmd_tx,
+        sv_cmd_tx.clone(),
         rollback_rx,
         Arc::clone(&rollback_store),
         tool_proxy,
     );
+
+    // Scheduler — load persisted schedules and wire into supervisor.
+    let schedules_path = log_dir.join("schedules.jsonl");
+    let initial_schedules = load_schedules(&schedules_path);
+    if !initial_schedules.is_empty() {
+        eprintln!("[scheduler] restored {} scheduled task(s)", initial_schedules.len());
+    }
+    let scheduler_state: SchedulerState = Arc::new(Mutex::new(initial_schedules));
+    let (sched_tx, sched_rx) = mpsc::channel::<(SessionId, ActionId, String, serde_json::Value)>(32);
+    if sv_cmd_tx.send(SupervisorCmd::SetScheduleTx { tx: sched_tx }).await.is_err() {
+        eprintln!("[agentd] warning: failed to wire scheduler channel");
+    }
+    let root_session = SessionId(0); // scheduled prompts fire on root session unless task specifies
+    spawn_scheduler_handler(Arc::clone(&scheduler_state), schedules_path.clone(), handle.clone(), sched_rx);
+    tokio::spawn(run_scheduler(Arc::clone(&scheduler_state), handle.clone(), schedules_path, root_session));
 
     // Subscribe before supervisor so no early PluginUp events are missed.
     let agent_rx = bcast.subscribe();
@@ -863,6 +880,9 @@ async fn gather_tools(
     tools.push(read_soul_md_spec());
     tools.push(propose_evolution_spec());
     tools.push(rollback_evolution_spec());
+    tools.push(schedule_task_spec());
+    tools.push(list_schedules_spec());
+    tools.push(cancel_schedule_spec());
     tools
 }
 
@@ -983,6 +1003,64 @@ fn rollback_evolution_spec() -> ToolSpec {
                 }
             },
             "required": ["evolution_id", "reason"]
+        }),
+    }
+}
+
+fn schedule_task_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "schedule_task".into(),
+        description: "Schedule a recurring task using a cron expression. The agent will autonomously \
+                      send the given prompt as a new turn at each scheduled time. Use standard 6-field \
+                      cron syntax: second minute hour day month weekday.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "cron": {
+                    "type":        "string",
+                    "description": "6-field cron expression, e.g. '0 0 8 * * *' = 8am daily."
+                },
+                "prompt": {
+                    "type":        "string",
+                    "description": "The message to send as a new autonomous turn."
+                },
+                "session_id": {
+                    "type":        "integer",
+                    "description": "Session to fire in (optional — defaults to root session 0)."
+                }
+            },
+            "required": ["cron", "prompt"]
+        }),
+    }
+}
+
+fn list_schedules_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "list_schedules".into(),
+        description: "List all active scheduled tasks with their IDs, cron expressions, prompts, \
+                      and last run times.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+    }
+}
+
+fn cancel_schedule_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "cancel_schedule".into(),
+        description: "Cancel a scheduled task by its ID. The task is removed immediately and \
+                      will not fire again.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "schedule_id": {
+                    "type":        "string",
+                    "description": "The schedule ID returned by schedule_task."
+                }
+            },
+            "required": ["schedule_id"]
         }),
     }
 }

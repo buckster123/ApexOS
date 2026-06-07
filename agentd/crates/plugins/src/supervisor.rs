@@ -29,6 +29,8 @@ pub enum SupervisorCmd {
     DirectCall  { tool: String, args: serde_json::Value, reply: oneshot::Sender<ToolOutput> },
     /// Wire the live soul.md Arc so read_soul_md returns current content.
     SetSoulArc  { arc: Arc<RwLock<String>> },
+    /// Wire the scheduler op channel so schedule_* tools route to the scheduler task.
+    SetScheduleTx { tx: mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)> },
 }
 
 /// Thin handle for calling plugin tools directly from non-agent code (e.g. the
@@ -66,6 +68,8 @@ pub struct Supervisor {
     sv_rx:             Option<mpsc::Receiver<SupervisorCmd>>,
     /// Set by main.rs so rollback_evolution can route to the applier task.
     rollback_tx:       Option<mpsc::Sender<(SessionId, ActionId, EvolutionId)>>,
+    /// Set by main.rs so schedule_* tools route to the scheduler task.
+    schedule_tx:       Option<mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)>>,
     /// Shared with engine so read_soul_md returns the live system prompt.
     soul_arc:          Option<Arc<RwLock<String>>>,
 }
@@ -84,6 +88,7 @@ impl Supervisor {
             sv_rx: Some(sv_rx),
             rollback_tx:       None,
             soul_arc:          None,
+            schedule_tx:       None,
         }
     }
 
@@ -95,6 +100,11 @@ impl Supervisor {
     /// Wires the rollback channel so `rollback_evolution` can reach the applier.
     pub fn set_rollback_tx(&mut self, tx: mpsc::Sender<(SessionId, ActionId, EvolutionId)>) {
         self.rollback_tx = Some(tx);
+    }
+
+    /// Wires the scheduler channel so schedule_* tools route to the scheduler task.
+    pub fn set_schedule_tx(&mut self, tx: mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)>) {
+        self.schedule_tx = Some(tx);
     }
 
     /// Shares the live soul.md Arc so `read_soul_md` returns current content.
@@ -213,6 +223,9 @@ impl Supervisor {
                         }
                         SupervisorCmd::SetSoulArc { arc } => {
                             self.soul_arc = Some(arc);
+                        }
+                        SupervisorCmd::SetScheduleTx { tx } => {
+                            self.schedule_tx = Some(tx);
                         }
                         SupervisorCmd::DirectCall { tool, args, reply } => {
                             if let Some(pid) = self.tool_registry.get(&tool).cloned() {
@@ -366,6 +379,38 @@ impl Supervisor {
                     },
                 }).await;
             });
+            return;
+        }
+
+        // Virtual tools: schedule_task / list_schedules / cancel_schedule — forwarded to scheduler task.
+        if matches!(call.tool.as_str(), "schedule_task" | "list_schedules" | "cancel_schedule") {
+            let call_id  = call.id;
+            let tool     = call.tool.clone();
+            let args     = call.args.clone();
+            let bus      = self.bus.clone();
+            match &self.schedule_tx {
+                Some(tx) => {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if tx.send((session, call_id, tool, args)).await.is_err() {
+                            bus.emit(Event::ToolResult {
+                                session,
+                                call: call_id,
+                                output: ToolOutput { ok: false, content: serde_json::json!("scheduler not available") },
+                            }).await;
+                        }
+                    });
+                }
+                None => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!("scheduler not initialized") },
+                        }).await;
+                    });
+                }
+            }
             return;
         }
 

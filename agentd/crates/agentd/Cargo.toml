@@ -16,4 +16,7 @@ apexos-store   = { path = "../store" }
 tokio          = { workspace = true }
 anyhow         = { workspace = true }
 serde_json     = { workspace = true }
+serde          = { workspace = true }
 toml_edit      = "0.22"
+cron           = "0.12"
+chrono         = "0.4"
