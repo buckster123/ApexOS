@@ -27,25 +27,26 @@ mode = "suggest"
 "rollback_evolution" = "ask"    # rollback is destructive — always confirm
 
 # apexos-tools
+# Rule enum values: allow (never asks), ask (always asks), workspace (auto inside AGENTD_WORKSPACE)
 "run_command"  = "ask"
-"write_file"   = "auto-edit"
+"write_file"   = "workspace"
 "delete_path"  = "ask"
-"read_file"    = "yolo"
-"list_dir"     = "yolo"
-"create_dir"   = "auto-edit"
-"http_fetch"   = "yolo"
-"cpu_temp"     = "yolo"
-"disk_usage"   = "yolo"
-"memory_info"  = "yolo"
-"uptime"       = "yolo"
+"read_file"    = "allow"
+"list_dir"     = "allow"
+"create_dir"   = "workspace"
+"http_fetch"   = "allow"
+"cpu_temp"     = "allow"
+"disk_usage"   = "allow"
+"memory_info"  = "allow"
+"uptime"       = "allow"
 
 # notifications
-"notify" = "yolo"
+"notify" = "allow"
 
 # scheduler — agent manages its own heartbeat
-"schedule_task"    = "yolo"
-"list_schedules"   = "yolo"
-"cancel_schedule"  = "yolo"
+"schedule_task"    = "allow"
+"list_schedules"   = "allow"
+"cancel_schedule"  = "allow"
 
 # Optional knobs for the multi-agent layer (wire in §8):
 [subagents]
