@@ -1,6 +1,6 @@
 [Unit]
 Description=ApexOS sensor bridge daemon
-After=network.target agentd.service
+After=network.target agentd.service sensorhead-dashboard.service
 Requires=agentd.service
 
 [Service]

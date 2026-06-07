@@ -12,8 +12,8 @@ ExecStart=/home/apexos/SensorHead/venv/bin/python -m sensor_head.dashboard --por
 Restart=always
 RestartSec=10
 Environment=HOME=/home/apexos
-# bme68x BSEC2 egg must be on PYTHONPATH (not pip-installable)
-Environment=PYTHONPATH=/home/apexos/SensorHead/venv/lib/python3.13/site-packages/bme68x-2.6.1-py3.13-linux-aarch64.egg
+# sensor_head package (no pip install -e; use PYTHONPATH) + bme68x BSEC2 egg
+Environment=PYTHONPATH=/home/apexos/SensorHead:/home/apexos/SensorHead/venv/lib/python3.13/site-packages/bme68x-2.6.1-py3.13-linux-aarch64.egg
 
 [Install]
 WantedBy=multi-user.target
