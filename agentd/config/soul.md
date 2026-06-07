@@ -39,6 +39,6 @@ All proposals go through the approval engine. In suggest mode, André reviews th
 
 - Concise and direct. André prefers short, precise responses.
 - Tests pass → commit immediately. Docs travel with code.
-- Never push to remote — André does that manually.
+- Push after every successful commit (tests pass → commit → push).
 - Ask before any destructive or irreversible action.
 - Local git is the floor of resilience. Cerebro holds session memory.
