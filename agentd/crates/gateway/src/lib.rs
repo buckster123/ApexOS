@@ -34,6 +34,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
         .route("/api/power",              post(power_handler))
         .route("/api/evolution/history",  get(evolution_history_handler))
+        .route("/api/evolution/stats",    get(evolution_stats_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -215,6 +216,65 @@ async fn evolution_history_handler(State(state): State<GatewayState>) -> impl In
     }
 
     Json(serde_json::json!(entries))
+}
+
+async fn evolution_stats_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let mut applied_total:  u64 = 0;
+    let mut rolledback_total: u64 = 0;
+    let mut by_kind: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+    let Ok(mut dir) = tokio::fs::read_dir(&state.events_dir).await else {
+        return Json(serde_json::json!({
+            "applied_total": 0, "rolledback_total": 0,
+            "rollback_rate": 0.0, "by_kind": {}
+        }));
+    };
+
+    let mut files: Vec<String> = Vec::new();
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("events-") && name.ends_with(".jsonl") {
+            files.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    files.sort();
+
+    for path in files {
+        let Ok(text) = tokio::fs::read_to_string(&path).await else { continue };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue }
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            match val.get("type").and_then(|t| t.as_str()) {
+                Some("evolution_applied") => {
+                    applied_total += 1;
+                    let kind = val.get("proposal")
+                        .and_then(|p| p.get("kind"))
+                        .and_then(|k| k.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    *by_kind.entry(kind).or_insert(0) += 1;
+                }
+                Some("evolution_rolled_back") => {
+                    rolledback_total += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let rollback_rate = if applied_total > 0 {
+        (rolledback_total as f64 / applied_total as f64 * 100.0 * 10.0).round() / 10.0
+    } else {
+        0.0
+    };
+
+    Json(serde_json::json!({
+        "applied_total":    applied_total,
+        "rolledback_total": rolledback_total,
+        "rollback_rate":    rollback_rate,
+        "by_kind":          by_kind,
+    }))
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

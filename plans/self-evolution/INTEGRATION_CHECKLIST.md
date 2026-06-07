@@ -79,14 +79,20 @@ No "almost done" — item is checked when tested and committed.
 - [x] Rollback: applier `select!` arm handles rollback_rx, applies undo proposal, emits `EvolutionRolledBack`
 - [x] All 37 tests pass (0 failures)
 - [ ] Self-update loop: agent proposes `UpdateSystemPrompt` after discovering improved phrasing (dogfood)
-- [ ] Metrics: `/api/evolution/stats` returning counts per variant, rollback rate
+- [x] Metrics: `/api/evolution/stats` returning counts per variant, applied total, rollback rate
 - [ ] Update this checklist and CLAUDE.md via the evolution mechanism itself (dogfood)
 
 ---
 
-## Blocked (do not start until Phase 0 lands)
+## Phase 4 — Cerebro Integration + Persistence
 
-- Full hot-reload implementation (needs `EvolutionApplied` event shape finalized)
-- Rollback tool (needs Cerebro episode shape agreed)
+- [ ] Episode wrapping: `episode_start` before apply, `add_step` per variant, `episode_end` after — so rollback history survives daemon restarts
+- [ ] Rollback store backed by Cerebro episodes instead of in-memory HashMap
+- [ ] Full RegisterMcpServer end-to-end test with a real new plugin
+- [ ] Rust-native code generation for new virtual tools (out of scope until Phase 4+)
+
+---
+
+## Deferred (no start date)
+
 - Any change to tokio task-shutdown ordering (still deferred in CLAUDE.md)
-- Rust-native code generation for new tools (Phase 4+ idea, out of scope for now)
