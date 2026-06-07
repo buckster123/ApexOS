@@ -73,9 +73,15 @@ so gateway stays decoupled from the policy crate.
 - [x] Gateway: `/api/soul` GET+POST, `/api/policy` POST, `lib/` static file serving
 
 **Known issues fixed:**
-- `hdr-logo` / `hdr-sessions` missing from desktop.html → null.addEventListener crash
-- `iframe.src` vs `iframe.getAttribute('src')` — empty src resolves to page URL
-- `const pluginCounts` → `window.pluginCounts` for cross-script access
+- `hdr-logo` / `hdr-sessions` missing from desktop.html → null.addEventListener crash, boot never started
+- `iframe.src` vs `iframe.getAttribute('src')` — empty src="" resolves to page URL, Cerebro/SensorHead iframes never loaded
+- `const pluginCounts` → `window.pluginCounts` — const is script-scoped, not visible cross-script
+- `let bootDone` → `var bootDone` — let is script-scoped, desktop-app.js couldn't set it, enableInput never called, chat input stayed disabled
+- Removed `Object.defineProperty(window,'bootDone',...)` hack — was correctly intercepting the let variable, now unnecessary with var
+- Win-content divs started `display:block` in body (outside #app) → inflated body height → flex column miscalculated, dock appeared to fill half screen. Fix: `display:none` until openWin mounts them
+- `#desktop-canvas { min-height: 0 }` — flex:1 child needs explicit min-height:0 to shrink below content size in column layout
+- `fonts-noto-color-emoji` installed on Pi — dock emoji icons invisible in cage kiosk without it
+- Logo dblclick → sessions modal (server-side) not history modal (localStorage apexos_history never written)
 
 ---
 
