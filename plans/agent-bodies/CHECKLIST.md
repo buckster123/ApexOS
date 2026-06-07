@@ -306,7 +306,16 @@ thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
 - [x] Smoke test: `[sensor-bridge] node connected` + `ApexOS: Temperature { celsius: 35.3, sensor_id: "cpu_thermal" }` in agentd logs
 - [x] Both services running: `systemctl status agentd apex-sensor-bridge` both active
 - [x] Commit + push: `add SensorEvent bus + /sensor-bridge gateway + apex-sensor-bridge daemon`
-- [ ] Add real I2C sensors (BME280) — next: expand apex-sensor-bridge with rppal + raw I2C reads
+- [ ] **Real sensors (Phase 6d next)**: sensor Pi has BME688 @ 0x77, MLX90640 @ 0x33, IMX500 (CAM0), IMX708 NoIR (CAM1)
+      Two paths forward (pick one next session):
+      A. Install SensorHead (buckster123/SensorHead) on USB disk, HTTP-poll localhost:8080 from bridge
+         - Gains: BSEC2 IAQ/CO2eq, full camera vision, thermal heatmaps, on-chip inference
+         - Needs: numpy, pillow, bme68x BSEC2 egg, libcamera/picamera2 install on USB disk
+      B. rppal direct I2C in apex-sensor-bridge (pure Rust, no Python)
+         - BME688 raw T/H/P/gas via I2C 0x77; MLX90640 32×24 thermal via I2C 0x33
+         - Loses IAQ/CO2eq (BSEC2 closed-source); gains: no external deps, runs as agentd user
+      NOTE: NVMe has the full SensorHead install (/home/hailo/...) but bind-mount approach is fragile.
+      The right move is a clean install on the USB disk or going the Rust rppal route.
 - [ ] Add GPIO level reads (digital sensors) — rppal InputPin, configurable pin list via env
 - [ ] `apex-gpio` MCP tool for manual GPIO reads — deferred to Phase 7
 
