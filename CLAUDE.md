@@ -133,8 +133,7 @@ becomes stale. Rules:
   `fix thinking-block retention in agent turn loop`
 - **Never amend a commit that already has later commits on top of it.**
 - **Never force-push.** Local history is the safety net — protect it.
-- **Pushing to remote is always manually triggered by André.** Never push
-  automatically, never suggest it unless asked.
+- **Push after every successful commit.** Tests pass → commit → push. No manual trigger needed for this repo.
 - **Local git is the floor of resilience.** Cerebro holds session memory;
   git holds code truth. If Cerebro is unavailable, the repo + these docs
   are enough to reconstruct full project context.
