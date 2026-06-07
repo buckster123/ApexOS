@@ -1,5 +1,5 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tokio::process::Command;
 use std::process::Stdio;
 use apexos_core::{ActionId, BusHandle, Event, EvolutionId, EvolutionProposal, PluginId, SessionId, ToolCall, ToolOutput};
@@ -25,6 +25,31 @@ pub enum SupervisorCmd {
     KillPlugin  { id: PluginId },
     /// Kill a plugin and restart it (in-place upgrade / config change).
     HotReload   { id: PluginId },
+    /// Direct tool call bypassing policy — reply arrives on the oneshot sender.
+    DirectCall  { tool: String, args: serde_json::Value, reply: oneshot::Sender<ToolOutput> },
+}
+
+/// Thin handle for calling plugin tools directly from non-agent code (e.g. the
+/// evolution applier calling Cerebro for episode tracking).
+#[derive(Clone)]
+pub struct ToolProxy {
+    tx: mpsc::Sender<SupervisorCmd>,
+}
+
+impl ToolProxy {
+    pub fn new(tx: mpsc::Sender<SupervisorCmd>) -> Self { Self { tx } }
+
+    pub async fn call(&self, tool: &str, args: serde_json::Value) -> anyhow::Result<ToolOutput> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx.send(SupervisorCmd::DirectCall {
+            tool:  tool.to_string(),
+            args,
+            reply: reply_tx,
+        }).await.map_err(|_| anyhow::anyhow!("supervisor channel closed"))?;
+        tokio::time::timeout(Duration::from_secs(10), reply_rx).await
+            .map_err(|_| anyhow::anyhow!("direct call timed out: {tool}"))?
+            .map_err(|_| anyhow::anyhow!("reply dropped"))
+    }
 }
 
 pub struct Supervisor {
@@ -174,6 +199,33 @@ impl Supervisor {
                                     }
                                 }
                                 // else: child exits → PluginDied fires → handle_died restarts
+                            }
+                        }
+                        SupervisorCmd::DirectCall { tool, args, reply } => {
+                            if let Some(pid) = self.tool_registry.get(&tool).cloned() {
+                                if let Some(plugin) = self.plugins.get(&pid) {
+                                    let client = plugin.client.clone();
+                                    tokio::spawn(async move {
+                                        let out = match client.call_tool(&tool, &args).await {
+                                            Ok(o)  => o,
+                                            Err(e) => ToolOutput {
+                                                ok:      false,
+                                                content: serde_json::json!(e.to_string()),
+                                            },
+                                        };
+                                        let _ = reply.send(out);
+                                    });
+                                } else {
+                                    let _ = reply.send(ToolOutput {
+                                        ok: false,
+                                        content: serde_json::json!(format!("plugin for '{tool}' not live")),
+                                    });
+                                }
+                            } else {
+                                let _ = reply.send(ToolOutput {
+                                    ok: false,
+                                    content: serde_json::json!(format!("unknown tool: {tool}")),
+                                });
                             }
                         }
                     }

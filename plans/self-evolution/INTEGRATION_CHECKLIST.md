@@ -84,12 +84,14 @@ No "almost done" — item is checked when tested and committed.
 
 ---
 
-## Phase 4 — Cerebro Integration + Persistence
+## Phase 4 — Cerebro Integration + Persistence ✓ (partial)
 
-- [ ] Episode wrapping: `episode_start` before apply, `add_step` per variant, `episode_end` after — so rollback history survives daemon restarts
-- [ ] Rollback store backed by Cerebro episodes instead of in-memory HashMap
-- [ ] Full RegisterMcpServer end-to-end test with a real new plugin
-- [ ] Rust-native code generation for new virtual tools (out of scope until Phase 4+)
+- [x] `ToolProxy` — `SupervisorCmd::DirectCall` + oneshot reply; supervisor handles in select loop; applier calls Cerebro tools without going through policy or bus
+- [x] Episode wrapping: `episode_start` before apply → `episode_add_step` with undo snapshot on success → `episode_end` with outcome; best-effort (Cerebro down → apply still proceeds)
+- [x] `evo_kind()` extracts proposal variant tag for episode titles; `parse_episode_id()` reads Cerebro response
+- [ ] Durable rollback: on cold-start (daemon restarted), recover undo proposal from Cerebro episode instead of in-memory store
+- [ ] Full RegisterMcpServer end-to-end test: register a live plugin via propose_evolution, verify PluginUp fires, verify UnregisterMcpServer tears it down
+- [ ] Rust-native code generation for new virtual tools (out of scope until Phase 5+)
 
 ---
 

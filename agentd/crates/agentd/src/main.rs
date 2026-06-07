@@ -5,7 +5,7 @@ use apexos_core::{
 use apexos_gateway::{serve, GatewayState};
 use apexos_plugins::{
     load as load_plugins, PluginConfig, PolicyConfig, PolicyEngine, RestartPolicy,
-    Supervisor, SupervisorCmd,
+    Supervisor, SupervisorCmd, ToolProxy,
 };
 use apexos_agent::{AnthropicProvider, TurnEngine, run_turn};
 use apexos_store::run_log_writer;
@@ -146,6 +146,9 @@ async fn main() -> anyhow::Result<()> {
     let rollback_store: Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    // ToolProxy — lets the evolution applier call Cerebro tools directly for episode tracking.
+    let tool_proxy = ToolProxy::new(sv_cmd_tx.clone());
+
     // Evolution applier — subscribes to EvolutionProposed and applies changes live.
     spawn_evolution_applier(
         bcast.subscribe(),
@@ -158,6 +161,7 @@ async fn main() -> anyhow::Result<()> {
         sv_cmd_tx,
         rollback_rx,
         Arc::clone(&rollback_store),
+        tool_proxy,
     );
 
     // Shared state for the agent router
@@ -193,12 +197,18 @@ fn spawn_evolution_applier(
     sv_cmd_tx:       mpsc::Sender<SupervisorCmd>,
     mut rollback_rx: mpsc::Receiver<(SessionId, ActionId, EvolutionId)>,
     rollback_store:  Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>>,
+    tool_proxy:      ToolProxy,
 ) {
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 result = bus_rx.recv() => match result {
                     Ok(Event::EvolutionProposed { id, proposal, proposed_by: _ }) => {
+                        let kind = evo_kind(&proposal);
+
+                        // Open a Cerebro episode for this apply (best-effort).
+                        let episode_id = episode_start(&tool_proxy, id, &kind).await;
+
                         // Snapshot current state for rollback BEFORE applying.
                         let undo = compute_undo(
                             &proposal, &soul_arc, &soul_path, &policy_path, &plugins_path,
@@ -214,8 +224,13 @@ fn spawn_evolution_applier(
                             Ok(summary) => {
                                 eprintln!("[evolution] applied {:?}: {summary}", id);
                                 if let Some(undo_proposal) = undo {
+                                    // Record undo snapshot in the episode before storing in memory.
+                                    if let Some(ref eid) = episode_id {
+                                        episode_add_step(&tool_proxy, eid, &undo_proposal, &summary).await;
+                                    }
                                     rollback_store.lock().await.insert(id, undo_proposal);
                                 }
+                                episode_end(&tool_proxy, &episode_id, "success", &summary).await;
                                 bus.emit(Event::EvolutionApplied {
                                     id,
                                     proposal:      proposal_copy,
@@ -225,6 +240,7 @@ fn spawn_evolution_applier(
                             }
                             Err(e) => {
                                 eprintln!("[evolution] apply failed {:?}: {e}", id);
+                                episode_end(&tool_proxy, &episode_id, "failed", &e.to_string()).await;
                                 bus.emit(Event::Error {
                                     session: None,
                                     message: format!("evolution {}: {e}", id.0),
@@ -296,6 +312,56 @@ fn spawn_evolution_applier(
             }
         }
     });
+}
+
+// ── evolution episode helpers (Cerebro, best-effort) ─────────────────────────
+
+fn evo_kind(proposal: &EvolutionProposal) -> String {
+    serde_json::to_value(proposal).ok()
+        .and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn parse_episode_id(output: &apexos_core::ToolOutput) -> Option<String> {
+    let text = output.content.as_str()?;
+    serde_json::from_str::<serde_json::Value>(text).ok()
+        .and_then(|v| v.get("episode_id").and_then(|id| id.as_str()).map(str::to_owned))
+}
+
+async fn episode_start(proxy: &ToolProxy, evo_id: EvolutionId, kind: &str) -> Option<String> {
+    match proxy.call("episode_start", serde_json::json!({
+        "title":       format!("evolution {}: {kind}", evo_id.0),
+        "description": format!("agentd self-evolution apply — {kind}"),
+        "agent_id":    "CLAUDE-APEX"
+    })).await {
+        Ok(out) if out.ok => parse_episode_id(&out),
+        Ok(out) => {
+            eprintln!("[evolution] episode_start not ok: {:?}", out.content); None
+        }
+        Err(e) => { eprintln!("[evolution] episode_start: {e}"); None }
+    }
+}
+
+async fn episode_add_step(proxy: &ToolProxy, episode_id: &str, undo: &EvolutionProposal, summary: &str) {
+    let undo_json = serde_json::to_string(undo).unwrap_or_default();
+    if let Err(e) = proxy.call("episode_add_step", serde_json::json!({
+        "episode_id": episode_id,
+        "content":    format!("applied: {summary}\nundo_snapshot: {undo_json}"),
+        "step_type":  "evolution_apply"
+    })).await {
+        eprintln!("[evolution] episode_add_step: {e}");
+    }
+}
+
+async fn episode_end(proxy: &ToolProxy, episode_id: &Option<String>, outcome: &str, summary: &str) {
+    let Some(eid) = episode_id.as_deref() else { return };
+    if let Err(e) = proxy.call("episode_end", serde_json::json!({
+        "episode_id": eid,
+        "outcome":    outcome,
+        "summary":    summary
+    })).await {
+        eprintln!("[evolution] episode_end: {e}");
+    }
 }
 
 /// Snapshot current state to produce an inverse proposal (for rollback).
