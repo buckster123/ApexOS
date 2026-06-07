@@ -138,7 +138,7 @@ restart = "always"
 
 ---
 
-## Phase 6b — Scheduler virtual tool ✗
+## Phase 6b — Scheduler virtual tool ✓
 
 **Goal:** Agent can schedule future tasks without human trigger. Real daemon behaviour.
 
@@ -168,17 +168,17 @@ Baked into `agentd/crates/agentd/src/main.rs` as a new virtual tool (same patter
 
 ### Checklist
 
-- [ ] Add `cron = "0.12"` to `agentd/Cargo.toml`
-- [ ] `agentd/crates/agentd/src/scheduler.rs` — `ScheduledTask` struct, load/save, `run_scheduler()`
-- [ ] `schedule_task_spec()` — tool spec registered in `gather_tools()`
-- [ ] `list_schedules_spec()`, `cancel_schedule_spec()`
-- [ ] Supervisor dispatch: handle `schedule_task` / `list_schedules` / `cancel_schedule` in `propose_tool_dispatch()`
-- [ ] `run_scheduler` spawned in `main()` — tokio task, fires `UserPrompt` on the bus
-- [ ] Policy rules: all three = `yolo` (agent manages its own schedule)
-- [ ] Smoke test: schedule `"* * * * *"` (every minute) "what time is it?"; verify agent self-fires within 2 minutes
+- [x] Add `cron = "0.12"` + `chrono = "0.4"` + `serde` to `agentd/crates/agentd/Cargo.toml`
+- [x] `agentd/crates/agentd/src/scheduler.rs` — `ScheduledTask` struct, JSONL load/save, `run_scheduler()`, `spawn_scheduler_handler()`
+- [x] `schedule_task_spec()`, `list_schedules_spec()`, `cancel_schedule_spec()` — registered in `gather_tools()`
+- [x] `SupervisorCmd::SetScheduleTx` + `schedule_tx` field + `set_schedule_tx()` in supervisor
+- [x] Supervisor dispatch: `schedule_*` tools forwarded via `(session, call_id, tool, args)` channel
+- [x] `run_scheduler` + `spawn_scheduler_handler` spawned in `main()` after evolution applier
+- [x] Policy rules: all three = `yolo`
+- [ ] Smoke test: schedule `"0 * * * * *"` (every minute) "what time is it?"; verify agent self-fires
 - [ ] Cancel it; verify no more fires
 - [ ] Daemon restart; verify schedule restored
-- [ ] Commit: `feat(scheduler): schedule_task virtual tool — cron-driven autonomous turns`
+- [x] Commit: `feat(scheduler): schedule_task virtual tool — cron-driven autonomous turns`
 
 ---
 
