@@ -186,19 +186,17 @@ Baked into `agentd/crates/agentd/src/main.rs` as a new virtual tool (same patter
 
 **Goal:** Agent can reach the user proactively, without user initiating.
 
-### Service options (decide before implementing)
+### Service options
 
 | Option | Pros | Cons |
 |---|---|---|
-| **Telegram** | Widely used, reliable Bot API, file/photo send | Heavy app, "syrup" on some phones |
+| **Telegram** | Widely used, reliable Bot API, file/photo send | Heavy app, makes phone sluggish |
 | **ntfy.sh** | No account needed, self-hostable, tiny app, REST | Less familiar, no 2-way |
 | **Pushover** | Clean app, priority levels, iOS/Android | Paid after trial |
 | **Email (SMTP)** | Universal | Async, may hit spam |
 | **Home Assistant webhook** | If HA is running, deeply integrated | Only useful if HA is in play |
 
-**Current lean: ntfy.sh** — stateless REST push, no account for basic use, the agent just does `curl -d "message" ntfy.sh/your-topic`. Extremely easy to implement.
-
-**Decision needed from user before 6c starts.**
+**Decision (2026-06-07):** Start with a **local stub** — write the `notify` tool structure but target something dead-simple first (e.g. write to a local file `/var/lib/agentd/notifications.jsonl` that the UI can poll, or just a desktop notification via `notify-send`). Wire Telegram or ntfy.sh as a second step once the plumbing is proven. This keeps 6c unblocked without requiring an account or phone setup.
 
 ### MCP tools (regardless of service)
 
@@ -222,16 +220,33 @@ Baked into `agentd/crates/agentd/src/main.rs` as a new virtual tool (same patter
 
 **Goal:** Agent touches the physical world. Pi has pins — use them.
 
-### Hardware questions (answer before implementing)
+### Hardware reality (2026-06-07)
 
-- What is physically connected to the Pi's GPIO right now? (if anything)
-- If nothing: start with built-in LED or a test LED + resistor
-- Pi 5 uses `gpiochip4` — gpiozero 2.0+ handles this automatically
+**The ApexOS Pi 5 has a Hailo-8L HAT connected** — the 40-pin header is occupied.
+GPIO phase is therefore a stub for future non-Hailo Pi setups, not for this machine.
 
-### Python MCP server
+**SensorHead** — a second Pi (offline, PSU repurposed for the ApexOS Pi) that had
+environmental sensors connected. Was exposed as Python MCP tools via the SensorHead
+service. Hardware: sensors wired to a Pi GPIO header, served over the network.
 
-`/usr/local/bin/apex-gpio-mcp` — Python script using gpiozero.
-Runs in `/opt/cerebro-venv` (already on Pi, has pip).
+**Future direction — dedicated body-pi:**
+Rather than Python MCP wrappers (what SensorHead was), the better architecture is a
+dedicated "body-pi" where sensors are wired directly and the firmware is Rust:
+- Sensor reads via `rppal` crate (pure Rust GPIO/I2C/SPI for Pi)
+- MCP server in Rust, speaks over network or stdio to ApexOS
+- No Python layer, no SensorHead intermediary
+- Sensors become first-class Event sources on the ApexOS bus (Temperature, Humidity, Motion, etc.)
+- This would make a clean `SensorEvent` variant in `core/types.rs`
+
+For now: implement GPIO phase as a **Rust stub** using `rppal` that compiles and
+runs on a bare Pi without Hailo. Real wiring happens when a body-pi is assembled.
+
+### Rust MCP server (stub)
+
+`tools/crates/apex-gpio/` — Rust binary using `rppal` crate.
+Compiles on any Pi; on ApexOS Pi with Hailo HAT, tools return a clear
+"GPIO pins occupied by Hailo HAT" message rather than failing silently.
+Real activation happens on a body-pi with free header.
 
 ### Tools
 
@@ -246,13 +261,25 @@ Runs in `/opt/cerebro-venv` (already on Pi, has pip).
 ### Checklist
 
 - [ ] **Decide what's connected** (or plan a first test circuit)
-- [ ] Install gpiozero in cerebro-venv: `pip install gpiozero lgpio`
-- [ ] Write `apex-gpio-mcp` Python MCP server (stdio JSON-RPC)
+- [ ] Add `rppal = "0.17"` to `tools/crates/apex-gpio/Cargo.toml`
+- [ ] Write `apex-gpio` Rust MCP server; detect Hailo HAT presence and return informative stub response
 - [ ] Add `agentd` user to `gpio` group: `sudo usermod -a -G gpio agentd`
 - [ ] Register in `plugins.toml`
 - [ ] Policy: `gpio_read`=`yolo`, `gpio_write`/`gpio_pulse`/`gpio_pwm`=`ask`
 - [ ] Smoke test: blink an LED from agent command
 - [ ] Commit: `feat(gpio): apex-gpio MCP server — physical world control`
+
+---
+
+## Body-pi architecture notes
+
+When a dedicated sensor Pi is assembled (not the ApexOS Hailo Pi):
+- Use `rppal` crate for direct GPIO/I2C/SPI — no Python layer
+- Define `SensorEvent` variants in `core/types.rs` (Temperature, Humidity, Motion, etc.)
+- Body-pi runs a lightweight Rust daemon that emits these events to the ApexOS bus
+  (either via WS to the gateway, or if on same LAN, via a UDP/TCP bridge)
+- SensorHead (the old Python approach) was proof-of-concept — this is the clean version
+- Hailo HAT stays on ApexOS Pi for inference offload; sensor Pi is a separate node
 
 ---
 
