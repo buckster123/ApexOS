@@ -327,42 +327,67 @@ fn evo_kind(proposal: &EvolutionProposal) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn parse_episode_id(output: &apexos_core::ToolOutput) -> Option<String> {
-    // MCP tool results wrap content in an array of typed blocks: [{type:"text", text:"..."}]
-    let text = match &output.content {
+/// Extract the text string from an MCP ToolOutput (content is an array of typed blocks).
+fn mcp_text(output: &apexos_core::ToolOutput) -> Option<String> {
+    match &output.content {
         serde_json::Value::Array(blocks) => blocks.iter()
             .find_map(|b| b.get("text").and_then(|t| t.as_str()))
-            .map(str::to_owned)?,
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    };
-    serde_json::from_str::<serde_json::Value>(&text).ok()
-        .and_then(|v| v.get("episode_id").and_then(|id| id.as_str()).map(str::to_owned))
+            .map(str::to_owned),
+        serde_json::Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// Parse an ID from a Cerebro response. Tries JSON first, then the
+/// human-readable "... (ID: xxxxx)" format that Cerebro 0.5.1 returns.
+fn parse_cerebro_id(output: &apexos_core::ToolOutput, json_key: &str) -> Option<String> {
+    let text = mcp_text(output)?;
+    if let Some(id) = serde_json::from_str::<serde_json::Value>(&text).ok()
+        .and_then(|v| v.get(json_key).and_then(|id| id.as_str()).map(str::to_owned))
+    {
+        return Some(id);
+    }
+    // Cerebro 0.5.1: "Episode started (ID: ep_xxxxx)" / "Memory stored (ID: mem_xxxxx)"
+    let prefix = "(ID: ";
+    let start = text.find(prefix)? + prefix.len();
+    let end   = start + text[start..].find(')')?;
+    Some(text[start..end].to_owned())
 }
 
 async fn episode_start(proxy: &ToolProxy, evo_id: EvolutionId, kind: &str) -> Option<String> {
     match proxy.call("episode_start", serde_json::json!({
-        "title":       format!("evolution {}: {kind}", evo_id.0),
-        "description": format!("agentd self-evolution apply — {kind}"),
-        "agent_id":    "CLAUDE-APEX"
+        "title":    format!("evolution {}: {kind}", evo_id.0),
+        "agent_id": "CLAUDE-APEX",
+        "tags":     ["evolution", kind]
     })).await {
-        Ok(out) if out.ok => {
-            eprintln!("[evolution] episode_start raw: {:?}", out.content);
-            parse_episode_id(&out)
-        }
-        Ok(out) => {
-            eprintln!("[evolution] episode_start not ok: {:?}", out.content); None
-        }
-        Err(e) => { eprintln!("[evolution] episode_start: {e}"); None }
+        Ok(out) if out.ok => parse_cerebro_id(&out, "episode_id"),
+        Ok(out) => { eprintln!("[evolution] episode_start not ok: {:?}", out.content); None }
+        Err(e)  => { eprintln!("[evolution] episode_start: {e}"); None }
     }
 }
 
+/// Store the undo snapshot as a memory, then link it to the episode as a step.
 async fn episode_add_step(proxy: &ToolProxy, episode_id: &str, undo: &EvolutionProposal, summary: &str) {
     let undo_json = serde_json::to_string(undo).unwrap_or_default();
+    let content   = format!("evolution apply: {summary}\nundo_snapshot: {undo_json}");
+
+    // Step 1: store the undo snapshot as a memory to get a memory_id.
+    let memory_id = match proxy.call("memory_store", serde_json::json!({
+        "content": content,
+        "tags":    ["evolution", "undo_snapshot"]
+    })).await {
+        Ok(out) if out.ok => parse_cerebro_id(&out, "memory_id"),
+        Ok(out) => { eprintln!("[evolution] memory_store not ok: {:?}", out.content); None }
+        Err(e)  => { eprintln!("[evolution] memory_store: {e}"); None }
+    };
+
+    let Some(mid) = memory_id else { return };
+
+    // Step 2: link the memory to the episode.
     if let Err(e) = proxy.call("episode_add_step", serde_json::json!({
         "episode_id": episode_id,
-        "content":    format!("applied: {summary}\nundo_snapshot: {undo_json}"),
-        "step_type":  "evolution_apply"
+        "memory_id":  mid,
+        "role":       "event"
     })).await {
         eprintln!("[evolution] episode_add_step: {e}");
     }
@@ -370,10 +395,11 @@ async fn episode_add_step(proxy: &ToolProxy, episode_id: &str, undo: &EvolutionP
 
 async fn episode_end(proxy: &ToolProxy, episode_id: &Option<String>, outcome: &str, summary: &str) {
     let Some(eid) = episode_id.as_deref() else { return };
+    let valence = match outcome { "success" => "positive", "failed" => "negative", _ => "neutral" };
     if let Err(e) = proxy.call("episode_end", serde_json::json!({
         "episode_id": eid,
-        "outcome":    outcome,
-        "summary":    summary
+        "summary":    summary,
+        "valence":    valence
     })).await {
         eprintln!("[evolution] episode_end: {e}");
     }
