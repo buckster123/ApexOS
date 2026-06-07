@@ -26,6 +26,19 @@ mode = "suggest"
 "propose_evolution"  = "ask"    # structural changes require explicit user approval before apply
 "rollback_evolution" = "ask"    # rollback is destructive — always confirm
 
+# apexos-tools
+"run_command"  = "ask"
+"write_file"   = "auto-edit"
+"delete_path"  = "ask"
+"read_file"    = "yolo"
+"list_dir"     = "yolo"
+"create_dir"   = "auto-edit"
+"http_fetch"   = "yolo"
+"cpu_temp"     = "yolo"
+"disk_usage"   = "yolo"
+"memory_info"  = "yolo"
+"uptime"       = "yolo"
+
 # Optional knobs for the multi-agent layer (wire in §8):
 [subagents]
 max_depth        = 4           # how deep the spawn tree may go

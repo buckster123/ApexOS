@@ -12,11 +12,6 @@ restart = "always"
 # env = { CEREBRO_DATA_DIR = "/var/lib/agentd/cerebro" }
 
 [[plugin]]
-id      = "shell"
-cmd     = "/usr/lib/agentd/plugins/shell-mcp"
-restart = "on-failure"
-
-[[plugin]]
-id      = "fs"
-cmd     = "/usr/lib/agentd/plugins/fs-mcp"
-restart = "on-failure"
+id      = "apexos-tools"
+cmd     = "/usr/local/bin/apexos-tools"
+restart = "always"
