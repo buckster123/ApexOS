@@ -186,100 +186,123 @@ Baked into `agentd/crates/agentd/src/main.rs` as a new virtual tool (same patter
 
 **Goal:** Agent can reach the user proactively, without user initiating.
 
-### Service options
+### Architecture decision (2026-06-07): notification surface stack
 
-| Option | Pros | Cons |
+Single `notify` tool, tries surfaces in priority order, uses whatever is configured/available:
+
+```
+1. JSONL log        ← /var/lib/agentd/notifications.jsonl — always, free, queryable by agent
+2. Kiosk toast      ← notify-send → cage compositor → HDMI display (zero config)
+3. Audio chime      ← aplay /usr/share/sounds/ (zero config, Pi 5 has HDMI audio)
+4. TTS              ← espeak-ng first (always on Debian), piper if installed (neural, better)
+5. ntfy.sh          ← if NTFY_TOPIC set in /etc/agentd/env (phone reach-out, no account)
+6. Telegram         ← if BOT_TOKEN + CHAT_ID set (for repo users who want it)
+```
+
+First three surfaces: zero external deps, work fully offline. TTS on the 8GB Pi with HDMI
+display is the flagship local experience — agent literally speaks its notifications.
+Telegram included for repo portability (user currently without a daily-driver phone for it).
+
+**TTS default**: `espeak-ng` first (always installed), detect `piper` binary + model and use
+if present. No opt-in env var needed — if audio device exists and espeak-ng is installed, use it.
+Piper model path: `/var/lib/agentd/piper/` (agent can download a voice model via http_fetch).
+
+**Implementation**: add `notify` tool to existing `apexos-tools` binary (not a separate binary).
+Tool signature: `notify(message, title?, priority?, surfaces?)` where surfaces defaults to all configured.
+
+### MCP tool
+
+| Tool | Signature | Policy |
 |---|---|---|
-| **Telegram** | Widely used, reliable Bot API, file/photo send | Heavy app, makes phone sluggish |
-| **ntfy.sh** | No account needed, self-hostable, tiny app, REST | Less familiar, no 2-way |
-| **Pushover** | Clean app, priority levels, iOS/Android | Paid after trial |
-| **Email (SMTP)** | Universal | Async, may hit spam |
-| **Home Assistant webhook** | If HA is running, deeply integrated | Only useful if HA is in play |
-
-**Decision (2026-06-07):** Start with a **local stub** — write the `notify` tool structure but target something dead-simple first (e.g. write to a local file `/var/lib/agentd/notifications.jsonl` that the UI can poll, or just a desktop notification via `notify-send`). Wire Telegram or ntfy.sh as a second step once the plumbing is proven. This keeps 6c unblocked without requiring an account or phone setup.
-
-### MCP tools (regardless of service)
-
-| Tool | Description |
-|---|---|
-| `notify` | `message: String, title?: String, priority?: String` |
-| `notify_file` | `path: String, caption?: String` — attach a file/image |
+| `notify` | `message, title?, priority?` | `yolo` |
 
 ### Checklist
 
-- [ ] **Decide notification service** (see options above)
-- [ ] Write notify tool — either in `apexos-tools` (add tools there) or separate `apex-notify` binary
-- [ ] Store credentials/topic in `/etc/agentd/env` (never in source)
-- [ ] Policy: `notify` = `yolo` (agent should be able to reach user without asking)
-- [ ] Smoke test: ask agent "send me a test notification" — verify receipt on phone
-- [ ] Commit: `feat(notify): notification tool via [chosen service]`
+- [ ] Add `notify` function to `tools/crates/apexos-tools/src/tools.rs`
+- [ ] Surface 1: append to `/var/lib/agentd/notifications.jsonl`
+- [ ] Surface 2: `notify-send` via `run_command` (reuse existing shell infrastructure)
+- [ ] Surface 3: `aplay` chime — embed a short beep or use a system sound
+- [ ] Surface 4: TTS — `espeak-ng -v en "{message}"`, fallback detect piper
+- [ ] Surface 5: ntfy.sh — `http_fetch POST https://ntfy.sh/{NTFY_TOPIC}` if env set
+- [ ] Surface 6: Telegram — POST to Bot API if BOT_TOKEN + CHAT_ID env set
+- [ ] Add `notify` to `tools/list` handler and policy.toml (`yolo`)
+- [ ] Build + deploy to Pi
+- [ ] Smoke test: ask agent "notify me that the body is online" — verify TTS + toast fire
+- [ ] Commit: `feat(notify): notify tool — JSONL + toast + audio/TTS + ntfy + telegram stack`
 
 ---
 
-## Phase 6d — GPIO ✗
+## Phase 6d — Satellite body-pi + SensorEvent bus ✗
 
-**Goal:** Agent touches the physical world. Pi has pins — use them.
+**Goal:** Sensors are first-class bus events, not tool poll responses. Agent perceives
+the physical world the same way it perceives WS messages — reactively.
 
-### Hardware reality (2026-06-07)
+### Architecture decision (2026-06-07): Option B — satellite agentd
 
-**The ApexOS Pi 5 has a Hailo-8L HAT connected** — the 40-pin header is occupied.
-GPIO phase is therefore a stub for future non-Hailo Pi setups, not for this machine.
+Chosen over Option A (MCP bridge) because sensors as *events* fit the actor model better
+than sensors as *tool calls*. A temperature spike should interrupt the agent, not wait for polling.
 
-**SensorHead** — a second Pi (offline, PSU repurposed for the ApexOS Pi) that had
-environmental sensors connected. Was exposed as Python MCP tools via the SensorHead
-service. Hardware: sensors wired to a Pi GPIO header, served over the network.
+**Topology:**
+```
+[body-pi]                          [ApexOS Pi]
+ rppal reads GPIO/I2C/SPI    →     SensorEvent on broadcast bus
+ lightweight Rust daemon      →     agent router reacts (no polling needed)
+ apex-sensor-bridge binary    WS→   gateway WS endpoint (new: /sensor-bridge)
+```
 
-**Future direction — dedicated body-pi:**
-Rather than Python MCP wrappers (what SensorHead was), the better architecture is a
-dedicated "body-pi" where sensors are wired directly and the firmware is Rust:
-- Sensor reads via `rppal` crate (pure Rust GPIO/I2C/SPI for Pi)
-- MCP server in Rust, speaks over network or stdio to ApexOS
-- No Python layer, no SensorHead intermediary
-- Sensors become first-class Event sources on the ApexOS bus (Temperature, Humidity, Motion, etc.)
-- This would make a clean `SensorEvent` variant in `core/types.rs`
+**body-pi hardware:** The original SensorHead Pi — same Pi that ran the Python MCP service.
+ApexOS is on a USB drive, boots from USB or NVMe interchangeably. Switch Pi by plugging
+USB drive into sensor Pi and booting. Sensor Pi has free 40-pin header (no Hailo HAT).
 
-For now: implement GPIO phase as a **Rust stub** using `rppal` that compiles and
-runs on a bare Pi without Hailo. Real wiring happens when a body-pi is assembled.
+**SensorHead was proof-of-concept** — Python MCP wrappers over GPIO. This replaces it
+entirely with Rust: `rppal` for GPIO/I2C/SPI, native Rust MCP → WS bridge, no Python layer.
 
-### Rust MCP server (stub)
+### New types needed in `core/types.rs`
 
-`tools/crates/apex-gpio/` — Rust binary using `rppal` crate.
-Compiles on any Pi; on ApexOS Pi with Hailo HAT, tools return a clear
-"GPIO pins occupied by Hailo HAT" message rather than failing silently.
-Real activation happens on a body-pi with free header.
+```rust
+// SensorEvent variants — first-class bus citizens
+pub enum SensorReading {
+    Temperature { celsius: f32, sensor_id: String },
+    Humidity    { percent: f32, sensor_id: String },
+    Pressure    { hpa: f32, sensor_id: String },
+    Motion      { detected: bool, sensor_id: String },
+    Distance    { cm: f32, sensor_id: String },
+    GpioLevel   { pin: u8, high: bool },
+}
 
-### Tools
+// New Event variant
+Event::SensorReading { node_id: String, reading: SensorReading, timestamp: u64 }
+```
 
-| Tool | Description |
-|---|---|
-| `gpio_read` | `pin: int` → `{value: 0\|1}` |
-| `gpio_write` | `pin: int, value: 0\|1` |
-| `gpio_pulse` | `pin: int, on_ms: int, off_ms?: int, count?: int` |
-| `gpio_pwm` | `pin: int, frequency_hz: float, duty_cycle: float` |
-| `gpio_list` | — list known pins and their current state |
+### New binaries
 
-### Checklist
+| Binary | Crate | Role |
+|---|---|---|
+| `apex-sensor-bridge` | `tools/crates/apex-sensor-bridge/` | Runs on body-pi; reads sensors via rppal; forwards SensorEvent WS frames to ApexOS gateway |
+| `apex-gpio` | `tools/crates/apex-gpio/` | MCP server for direct GPIO on any Pi without Hailo; stub on ApexOS Pi |
 
-- [ ] **Decide what's connected** (or plan a first test circuit)
-- [ ] Add `rppal = "0.17"` to `tools/crates/apex-gpio/Cargo.toml`
-- [ ] Write `apex-gpio` Rust MCP server; detect Hailo HAT presence and return informative stub response
-- [ ] Add `agentd` user to `gpio` group: `sudo usermod -a -G gpio agentd`
-- [ ] Register in `plugins.toml`
-- [ ] Policy: `gpio_read`=`yolo`, `gpio_write`/`gpio_pulse`/`gpio_pwm`=`ask`
-- [ ] Smoke test: blink an LED from agent command
-- [ ] Commit: `feat(gpio): apex-gpio MCP server — physical world control`
+### Gateway change
 
----
+New WS endpoint `/sensor-bridge` accepts authenticated connections from body-pi nodes.
+Receives `SensorReading` JSON frames, emits `Event::SensorReading` on the broadcast bus.
+Agent router reacts: new `Ok(Event::SensorReading { .. })` arm can trigger a turn if
+thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
 
-## Body-pi architecture notes
+### Build plan (next session start: switch to sensor Pi first)
 
-When a dedicated sensor Pi is assembled (not the ApexOS Hailo Pi):
-- Use `rppal` crate for direct GPIO/I2C/SPI — no Python layer
-- Define `SensorEvent` variants in `core/types.rs` (Temperature, Humidity, Motion, etc.)
-- Body-pi runs a lightweight Rust daemon that emits these events to the ApexOS bus
-  (either via WS to the gateway, or if on same LAN, via a UDP/TCP bridge)
-- SensorHead (the old Python approach) was proof-of-concept — this is the clean version
-- Hailo HAT stays on ApexOS Pi for inference offload; sensor Pi is a separate node
+- [ ] Add `SensorReading` enum + `Event::SensorReading` to `core/types.rs`
+- [ ] Add `state.rs` apply arm (no-op for now, just round-trip)
+- [ ] New gateway WS endpoint `/sensor-bridge` — auth token in `/etc/agentd/env`
+- [ ] `tools/crates/apex-sensor-bridge/` — Rust binary with `rppal` + `tungstenite` client
+- [ ] Sensor reads: I2C scan on startup, detect BME280/DHT22/HC-SR04 by address
+- [ ] Forward loop: read → JSON → WS send to ApexOS gateway
+- [ ] Agent router: react to `SensorReading` (log + optional trigger turn on threshold)
+- [ ] `tools/crates/apex-gpio/` — MCP stub for manual GPIO (runs on body-pi, free header)
+- [ ] Deploy: `apex-sensor-bridge` as systemd service on body-pi
+- [ ] Deploy: updated `agentd` on ApexOS Pi with gateway change
+- [ ] Smoke test: plug in BME280, verify Temperature events appear on ApexOS bus + UI
+- [ ] Smoke test: threshold trigger — set temp alert, verify agent self-fires when exceeded
+- [ ] Commit: `feat(sensors): SensorEvent bus + apex-sensor-bridge satellite daemon`
 
 ---
 
@@ -309,3 +332,6 @@ When a dedicated sensor Pi is assembled (not the ApexOS Hailo Pi):
 - **disk_usage**: Using `df -B1` subprocess (one per mount entry) avoids direct `statvfs` FFI; slower but simpler and portable.
 - **reqwest blocking feature**: must be declared explicitly (`reqwest = { features = ["blocking"] }`); tokio runtime not needed.
 - **`plugins.pi.toml`**: Pi production config; deployed to `/etc/agentd/plugins.toml` by hand. Dev config (`plugins.toml`) uses local paths for cerebro.
+- **scheduler cron format**: 6-field (second minute hour day month weekday), not standard 5-field. `"0 0 8 * * *"` = 8am daily.
+- **6d: switch Pi first** — sensor Pi has free 40-pin header (no Hailo). ApexOS USB drive boots on either Pi interchangeably.
+- **6d: gateway auth** — `/sensor-bridge` WS endpoint needs a shared secret in `/etc/agentd/env` (`SENSOR_BRIDGE_TOKEN`) so body-pi can authenticate.
