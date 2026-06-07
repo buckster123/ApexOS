@@ -4,174 +4,194 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ApexOS Desktop</title>
+  <link rel="stylesheet" href="lib/winbox.min.css">
   <link rel="stylesheet" href="desktop-style.css">
 </head>
 <body>
 
-  <!-- ─── Boot screen (shared with CLI) ───────────────────────────────────── -->
+  <!-- ─── Boot screen ─────────────────────────────────────────────────────── -->
   <div id="boot">
     <pre id="boot-logo"></pre>
     <div id="boot-lines"></div>
-
     <div id="key-form" class="hidden">
       <div id="key-form-inner">
         <div class="key-label">⚠  ANTHROPIC_API_KEY not configured</div>
         <div class="key-sub">Enter your key to continue. It will be stored on this device.</div>
         <div class="key-row">
           <span class="key-prompt">KEY&nbsp;❯</span>
-          <input id="key-input" type="password" autocomplete="off" spellcheck="false"
-                 placeholder="sk-ant-api03-...">
+          <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-api03-...">
           <button id="key-submit">CONNECT</button>
         </div>
         <div id="key-error" class="hidden key-error"></div>
       </div>
     </div>
-
     <span id="boot-cursor">_</span>
   </div>
 
-  <!-- ─── Desktop app ──────────────────────────────────────────────────────── -->
+  <!-- ─── Desktop shell ───────────────────────────────────────────────────── -->
   <div id="app" class="hidden">
 
-    <!-- Title bar -->
-    <header id="header">
-      <div id="hdr-left">
-        <span id="hdr-logo">⬡ APEXOS</span>
-        <span id="hdr-center"></span>
+    <!-- Top bar -->
+    <div id="topbar">
+      <div id="topbar-left">
+        <span id="apex-logo">⬡ APEXOS</span>
       </div>
-      <div id="hdr-controls">
+      <div id="topbar-center">
         <select id="model-select" title="Active model">
           <option value="claude-sonnet-4-6">SONNET 4.6</option>
           <option value="claude-opus-4-8">OPUS 4.8</option>
           <option value="claude-opus-4-7">OPUS 4.7</option>
           <option value="claude-haiku-4-5">HAIKU 4.5</option>
         </select>
-        <span id="hdr-evo" class="hidden" title="Evolution history (Ctrl+Shift+E)"></span>
-        <span id="hdr-sessions" title="Sessions (Ctrl+Shift+S)">SESSIONS</span>
         <select id="policy-select" class="policy-select" title="Policy mode">
           <option value="suggest">SUGGEST</option>
           <option value="auto-edit">AUTO-EDIT</option>
           <option value="yolo">YOLO</option>
         </select>
+        <span id="hdr-evo" class="hidden" title="Evolution history">Σ0</span>
+      </div>
+      <div id="topbar-right">
         <span id="hdr-status">
           <span id="ws-dot">●</span>
           <span id="ws-label">CONNECTING</span>
         </span>
-        <button class="skin-switch-btn" onclick="switchSkin('cli')" title="Switch to CLI skin">CLI</button>
-        <button id="power-btn" title="Power">⏻</button>
+        <span id="topbar-clock"></span>
+        <button onclick="switchSkin('cli')" class="topbar-btn" title="CLI skin">CLI</button>
+        <button id="power-btn" class="topbar-btn" title="Power">⏻</button>
       </div>
-    </header>
+    </div>
 
-    <!-- Main area: chat + sidebar -->
-    <div id="desktop-main">
-
-      <!-- Left: agent chat -->
-      <div id="chat-panel">
-        <div id="output"></div>
-        <div id="input-row">
-          <span id="prompt-char">❯</span>
-          <input id="prompt-input" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="send a message..." disabled>
-          <button id="cancel-btn" class="hidden" title="Cancel (Esc)">CANCEL</button>
-          <button id="send-btn" disabled>SEND</button>
-          <button id="new-session-btn" title="New session (Ctrl+K)">⊕</button>
-        </div>
-        <div id="shortcuts-bar">Enter send · Esc cancel · Ctrl+K new · Ctrl+Shift+S sessions</div>
+    <!-- Desktop canvas (WinBox windows float here) -->
+    <div id="desktop-canvas">
+      <div id="desktop-wallpaper">
+        <pre id="wallpaper-logo"></pre>
       </div>
+    </div>
 
-      <!-- Right: sidebar -->
-      <aside id="sidebar">
+    <!-- Dock -->
+    <div id="dock">
+      <button class="dock-btn" id="dock-agent"    onclick="toggleWin('agent')"     title="Agent">🤖<span>Agent</span></button>
+      <button class="dock-btn" id="dock-sensors"  onclick="toggleWin('sensors')"   title="Sensors">📡<span>Sensors</span></button>
+      <button class="dock-btn" id="dock-cerebro"  onclick="toggleWin('cerebro')"   title="Cerebro">🧠<span>Cerebro</span></button>
+      <button class="dock-btn" id="dock-sensorhead" onclick="toggleWin('sensorhead')" title="Sensor Head">👁<span>Sense</span></button>
+      <div class="dock-divider"></div>
+      <button class="dock-btn" id="dock-settings" onclick="toggleWin('settings')"  title="Settings">⚙<span>Settings</span></button>
+    </div>
 
-        <!-- Quick launch -->
-        <div class="sidebar-card" id="launch-card">
-          <div class="card-title">QUICK LAUNCH</div>
-          <a class="launch-btn" id="launch-cerebro" href="#" target="_blank" rel="noopener">
-            <span class="launch-icon">🧠</span>
-            <span class="launch-label">Cerebro Dashboard</span>
-            <span class="launch-arrow">↗</span>
-          </a>
-          <a class="launch-btn" id="launch-sensorhead" href="#" target="_blank" rel="noopener">
-            <span class="launch-icon">👁</span>
-            <span class="launch-label">Sensor Head</span>
-            <span class="launch-arrow">↗</span>
-          </a>
-        </div>
+  </div><!-- #app -->
 
-        <!-- Live sensor widget -->
-        <div class="sidebar-card" id="sensor-widget">
-          <div class="card-title">ENVIRONMENT <span class="sensor-age" id="sensor-age"></span></div>
-          <div class="sensor-grid">
-            <div class="sensor-item">
-              <span class="sensor-icon">🌡</span>
-              <span class="sensor-val" id="s-temp">—</span>
-              <span class="sensor-unit">°C</span>
-            </div>
-            <div class="sensor-item">
-              <span class="sensor-icon">💧</span>
-              <span class="sensor-val" id="s-humid">—</span>
-              <span class="sensor-unit">%</span>
-            </div>
-            <div class="sensor-item">
-              <span class="sensor-icon">💨</span>
-              <span class="sensor-val" id="s-iaq">—</span>
-              <span class="sensor-unit">IAQ</span>
-            </div>
-            <div class="sensor-item">
-              <span class="sensor-icon">📡</span>
-              <span class="sensor-val" id="s-press">—</span>
-              <span class="sensor-unit">hPa</span>
-            </div>
+  <!-- ─── Window content (hidden containers, mounted into WinBox) ──────────── -->
+
+  <!-- Agent window -->
+  <div id="win-agent-content" class="win-content">
+    <div id="output"></div>
+    <div id="input-row">
+      <span id="prompt-char">❯</span>
+      <input id="prompt-input" type="text" autocomplete="off" spellcheck="false" placeholder="send a message..." disabled>
+      <button id="cancel-btn" class="hidden">CANCEL</button>
+      <button id="send-btn" disabled>SEND</button>
+      <button id="new-session-btn" title="New session (Ctrl+K)">⊕</button>
+    </div>
+    <div id="shortcuts-bar">Enter send · Esc cancel · Ctrl+K new · Ctrl+Shift+S sessions</div>
+  </div>
+
+  <!-- Sensors window -->
+  <div id="win-sensors-content" class="win-content sensor-win">
+    <div class="sensor-section">
+      <div class="sensor-sec-title">ENVIRONMENT <span class="sensor-age" id="sensor-age"></span></div>
+      <div class="sensor-grid">
+        <div class="sensor-item"><span class="si-icon">🌡</span><span class="si-val" id="s-temp">—</span><span class="si-unit">°C</span></div>
+        <div class="sensor-item"><span class="si-icon">💧</span><span class="si-val" id="s-humid">—</span><span class="si-unit">%RH</span></div>
+        <div class="sensor-item"><span class="si-icon">📡</span><span class="si-val" id="s-press">—</span><span class="si-unit">hPa</span></div>
+        <div class="sensor-item"><span class="si-icon">💨</span><span class="si-val" id="s-iaq">—</span><span class="si-unit">IAQ</span></div>
+      </div>
+      <div class="iaq-bar-wrap"><div class="iaq-bar" id="s-iaq-bar"></div></div>
+      <div class="iaq-label" id="s-iaq-label"></div>
+    </div>
+    <div class="sensor-section">
+      <div class="sensor-sec-title">THERMAL · MLX90640</div>
+      <div class="thermal-row">
+        <div class="thermal-cell"><span class="tc-lbl">MIN</span><span class="tc-val" id="s-tmin">—</span><span class="tc-unit">°C</span></div>
+        <div class="thermal-cell"><span class="tc-lbl">MEAN</span><span class="tc-val" id="s-tmean">—</span><span class="tc-unit">°C</span></div>
+        <div class="thermal-cell"><span class="tc-lbl">MAX</span><span class="tc-val" id="s-tmax">—</span><span class="tc-unit">°C</span></div>
+      </div>
+    </div>
+    <div class="sensor-section">
+      <div class="sensor-sec-title">SYSTEM</div>
+      <div class="sys-line"><span class="sl-lbl">CPU</span><span class="sl-val" id="s-cpu">—</span><span class="sl-unit">°C</span></div>
+      <div class="sys-line"><span class="sl-lbl">TOOLS</span><span class="sl-val" id="s-tools">—</span></div>
+    </div>
+  </div>
+
+  <!-- Cerebro window (iframe) -->
+  <div id="win-cerebro-content" class="win-content iframe-win">
+    <iframe id="cerebro-iframe" src="" frameborder="0" allow="same-origin"></iframe>
+  </div>
+
+  <!-- SensorHead window (iframe) -->
+  <div id="win-sensorhead-content" class="win-content iframe-win">
+    <iframe id="sensorhead-iframe" src="" frameborder="0" allow="same-origin"></iframe>
+  </div>
+
+  <!-- Settings window (Alpine) -->
+  <div id="win-settings-content" class="win-content settings-win" x-data="settingsApp()">
+    <div class="settings-nav">
+      <button :class="tab==='soul' && 'active'" @click="tab='soul'">Soul</button>
+      <button :class="tab==='policy' && 'active'" @click="tab='policy'">Policy</button>
+      <button :class="tab==='plugins' && 'active'" @click="tab='plugins'">Plugins</button>
+    </div>
+
+    <!-- Soul.md editor -->
+    <div class="settings-pane" x-show="tab==='soul'">
+      <div class="settings-row">
+        <span class="settings-desc">Agent system prompt — the soul of ApexSonnet. Edits take effect on next turn.</span>
+        <button class="btn-save" @click="saveSoul()" :disabled="saving">
+          <span x-text="saving ? 'SAVING…' : saved ? '✓ SAVED' : 'SAVE'"></span>
+        </button>
+      </div>
+      <textarea class="soul-editor" x-model="soul" spellcheck="false" placeholder="Loading…"></textarea>
+      <div class="settings-err" x-show="err" x-text="err"></div>
+    </div>
+
+    <!-- Policy rules -->
+    <div class="settings-pane" x-show="tab==='policy'">
+      <div class="settings-desc">Global mode applies to all tools unless a specific rule overrides it.</div>
+      <div class="policy-mode-row">
+        <span class="sl-lbl">MODE</span>
+        <select @change="setMode($event.target.value)" class="policy-mode-sel">
+          <option value="suggest"   :selected="currentMode==='suggest'">Suggest — ask for everything</option>
+          <option value="auto-edit" :selected="currentMode==='auto-edit'">Auto-Edit — approve writes, run reads</option>
+          <option value="yolo"      :selected="currentMode==='yolo'">Yolo — autonomous, no approval</option>
+        </select>
+      </div>
+      <div class="settings-desc" style="margin-top:12px">Per-tool rules from policy.toml:</div>
+      <div class="rules-table">
+        <template x-for="[tool, rule] in rules" :key="tool">
+          <div class="rule-row">
+            <span class="rule-tool" x-text="tool"></span>
+            <span class="rule-badge" :class="'rule-'+rule" x-text="rule"></span>
           </div>
-          <div class="sensor-iaq-bar-wrap">
-            <div class="sensor-iaq-bar" id="s-iaq-bar"></div>
-          </div>
-          <div class="sensor-iaq-label" id="s-iaq-label"></div>
-        </div>
+        </template>
+        <div class="settings-desc" x-show="rules.length===0">Loading…</div>
+      </div>
+    </div>
 
-        <div class="sidebar-card" id="thermal-widget">
-          <div class="card-title">THERMAL</div>
-          <div class="thermal-grid">
-            <div class="thermal-item">
-              <span class="thermal-label">MIN</span>
-              <span class="thermal-val" id="s-tmin">—</span>
-              <span class="thermal-unit">°C</span>
-            </div>
-            <div class="thermal-item">
-              <span class="thermal-label">MEAN</span>
-              <span class="thermal-val" id="s-tmean">—</span>
-              <span class="thermal-unit">°C</span>
-            </div>
-            <div class="thermal-item">
-              <span class="thermal-label">MAX</span>
-              <span class="thermal-val" id="s-tmax">—</span>
-              <span class="thermal-unit">°C</span>
-            </div>
+    <!-- Plugins -->
+    <div class="settings-pane" x-show="tab==='plugins'">
+      <div class="settings-desc">Active MCP plugins registered with the supervisor.</div>
+      <div class="plugin-list">
+        <template x-for="[id, count] in plugins" :key="id">
+          <div class="plugin-row">
+            <span class="plugin-dot">●</span>
+            <span class="plugin-id" x-text="id"></span>
+            <span class="plugin-count" x-text="count + ' tools'"></span>
           </div>
-        </div>
+        </template>
+      </div>
+    </div>
+  </div>
 
-        <div class="sidebar-card" id="system-widget">
-          <div class="card-title">SYSTEM</div>
-          <div class="sys-row">
-            <span class="sys-label">CPU</span>
-            <span class="sys-val" id="s-cpu">—</span>
-            <span class="sys-unit">°C</span>
-          </div>
-          <div class="sys-row">
-            <span class="sys-label">TOOLS</span>
-            <span class="sys-val" id="s-tools">—</span>
-          </div>
-          <div class="sys-row">
-            <span class="sys-label">WS</span>
-            <span class="sys-val" id="s-ws-state">—</span>
-          </div>
-        </div>
-
-      </aside>
-    </div><!-- desktop-main -->
-
-  </div><!-- app -->
-
-  <!-- ─── Shared modals (same structure as CLI skin) ───────────────────────── -->
+  <!-- ─── Shared modals ───────────────────────────────────────────────────── -->
   <div id="power-modal" class="hidden">
     <div id="power-modal-inner">
       <div id="power-modal-title">SYSTEM POWER</div>
@@ -183,55 +203,31 @@
       <div id="power-countdown" class="hidden"></div>
     </div>
   </div>
-
   <div id="history-modal" class="hidden">
     <div id="history-modal-inner">
-      <div id="history-modal-header">
-        <span>LAST SESSION</span>
-        <button id="history-close-btn">✕</button>
-      </div>
+      <div id="history-modal-header"><span>LAST SESSION</span><button id="history-close-btn">✕</button></div>
       <div id="history-content"></div>
     </div>
   </div>
-
   <div id="evo-modal" class="hidden">
     <div id="evo-modal-inner">
-      <div id="evo-modal-header">
-        <span>EVOLUTION HISTORY</span>
-        <button id="evo-close-btn">✕</button>
-      </div>
+      <div id="evo-modal-header"><span>EVOLUTION HISTORY</span><button id="evo-close-btn">✕</button></div>
       <div id="evo-content"></div>
     </div>
   </div>
-
   <div id="sessions-modal" class="hidden">
     <div id="sessions-modal-inner">
-      <div id="sessions-modal-header">
-        <span>SESSIONS</span>
-        <button id="sessions-close-btn">✕</button>
-      </div>
+      <div id="sessions-modal-header"><span>SESSIONS</span><button id="sessions-close-btn">✕</button></div>
       <div id="sessions-content"></div>
-      <div id="sessions-footer">
-        <button id="sessions-new-btn">⊕ NEW SESSION</button>
-      </div>
+      <div id="sessions-footer"><button id="sessions-new-btn">⊕ NEW SESSION</button></div>
     </div>
   </div>
+  <!-- hdr-center needed by app.js for tool count + collapse-all -->
+  <span id="hdr-center" style="display:none"></span>
 
+  <script src="lib/winbox.min.js"></script>
+  <script defer src="lib/alpine.min.js"></script>
   <script src="app.js"></script>
-  <script>
-    // Wire launch URLs at runtime so they use the correct Pi hostname
-    document.getElementById('launch-cerebro').href =
-      `http://${location.hostname}:8767/ui`;
-    document.getElementById('launch-sensorhead').href =
-      `http://${location.hostname}:8080`;
-    // Populate system-widget tool count from shared pluginCounts
-    setInterval(() => {
-      const tools = Object.values(pluginCounts).reduce((a,b) => a+b, 0);
-      const el = document.getElementById('s-tools');
-      if (el) el.textContent = tools || '—';
-      const ws = document.getElementById('s-ws-state');
-      if (ws) ws.textContent = document.getElementById('ws-label')?.textContent || '—';
-    }, 2000);
-  </script>
+  <script src="desktop-app.js"></script>
 </body>
 </html>

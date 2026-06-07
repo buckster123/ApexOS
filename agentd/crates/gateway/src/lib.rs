@@ -34,6 +34,7 @@ pub struct GatewayState {
     pub next_session_id:       Arc<AtomicU64>,
     /// Shared secret for /sensor-bridge WS connections. Empty = no auth required.
     pub sensor_bridge_token:   Arc<String>,
+    pub soul_path:             PathBuf,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -44,6 +45,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
         .route("/api/policy",   post(set_policy_handler))
+        .route("/api/soul",     get(get_soul_handler).post(set_soul_handler))
         .route("/api/power",              post(power_handler))
         .route("/api/evolution/history",  get(evolution_history_handler))
         .route("/api/evolution/stats",    get(evolution_stats_handler))
@@ -196,13 +198,25 @@ async fn static_handler(
     let path = uri.path().trim_start_matches('/');
     let file_name = if path.is_empty() { "index.html" } else { path };
 
-    let content_type: &'static str = match file_name {
-        "index.html"        => "text/html; charset=utf-8",
-        "desktop.html"      => "text/html; charset=utf-8",
-        "style.css"         => "text/css; charset=utf-8",
-        "desktop-style.css" => "text/css; charset=utf-8",
-        "app.js"            => "application/javascript; charset=utf-8",
-        _                   => return StatusCode::NOT_FOUND.into_response(),
+    // Block path traversal
+    if file_name.contains("..") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let content_type: &'static str = if file_name.starts_with("lib/") {
+        if file_name.ends_with(".js")  { "application/javascript; charset=utf-8" }
+        else if file_name.ends_with(".css") { "text/css; charset=utf-8" }
+        else { return StatusCode::NOT_FOUND.into_response(); }
+    } else {
+        match file_name {
+            "index.html"        => "text/html; charset=utf-8",
+            "desktop.html"      => "text/html; charset=utf-8",
+            "style.css"         => "text/css; charset=utf-8",
+            "desktop-style.css" => "text/css; charset=utf-8",
+            "app.js"            => "application/javascript; charset=utf-8",
+            "desktop-app.js"    => "application/javascript; charset=utf-8",
+            _                   => return StatusCode::NOT_FOUND.into_response(),
+        }
     };
 
     let full_path = state.ui_dir.join(file_name);
@@ -243,6 +257,27 @@ async fn set_policy_handler(
     *state.policy_mode.write().await = mode.clone();
     let _ = state.policy_set_tx.send(mode).await;
     Json(serde_json::json!({ "ok": true }))
+}
+
+async fn get_soul_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    match tokio::fs::read_to_string(&state.soul_path).await {
+        Ok(text) => Json(serde_json::json!({ "ok": true, "content": text })),
+        Err(e)   => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
+async fn set_soul_handler(
+    State(state): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let content = match body["content"].as_str() {
+        Some(s) => s.to_string(),
+        None    => return Json(serde_json::json!({ "ok": false, "error": "missing content" })),
+    };
+    match tokio::fs::write(&state.soul_path, content).await {
+        Ok(_)  => Json(serde_json::json!({ "ok": true })),
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    }
 }
 
 async fn set_key_handler(

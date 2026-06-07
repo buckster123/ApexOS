@@ -135,6 +135,10 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("SENSOR_BRIDGE_TOKEN").unwrap_or_default()
     );
 
+    // Load soul early so we can share the path with both the gateway (settings UI) and
+    // the turn engine below.
+    let (soul_path, soul_content) = load_soul();
+
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
         bus:                  handle.clone(),
@@ -149,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         histories:            Arc::clone(&histories),
         next_session_id:      Arc::clone(&next_session_id),
         sensor_bridge_token:  sensor_bridge_token,
+        soul_path:            soul_path.clone(),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -184,7 +189,6 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
     // Agent turn engine — shares key + model Arcs so browser UI changes take effect immediately
-    let (soul_path, soul_content) = load_soul();
     let engine: Arc<TurnEngine> = Arc::new(TurnEngine::new(
         AnthropicProvider::new_shared(Arc::clone(&api_key_arc), Arc::clone(&model_arc)),
         16,
