@@ -57,6 +57,43 @@ const WIN_DEFAULTS = {
   },
 };
 
+// ─── Taskbar tab management ───────────────────────────────────────────────────
+function createTaskbarTab(id, title) {
+  if (document.getElementById(`tab-${id}`)) return;
+  const tab = document.createElement('button');
+  tab.className = 'taskbar-tab';
+  tab.id = `tab-${id}`;
+  tab.textContent = title;
+  tab.onclick = () => toggleWin(id);
+  document.getElementById('taskbar-tabs').appendChild(tab);
+}
+
+function removeTaskbarTab(id) {
+  document.getElementById(`tab-${id}`)?.remove();
+}
+
+function updateTab(id, state) {
+  const tab = document.getElementById(`tab-${id}`);
+  if (!tab) return;
+  tab.classList.remove('tab-active', 'tab-minimized');
+  if (state === 'active')    tab.classList.add('tab-active');
+  if (state === 'minimized') tab.classList.add('tab-minimized');
+}
+
+// ─── Start menu ───────────────────────────────────────────────────────────────
+function toggleStartMenu() {
+  document.getElementById('start-menu').classList.toggle('hidden');
+}
+
+function closeStartMenu() {
+  document.getElementById('start-menu').classList.add('hidden');
+}
+
+function launchApp(id) {
+  closeStartMenu();
+  toggleWin(id);
+}
+
 function openWin(id) {
   if (wins[id]) { wins[id].focus(); return; }
 
@@ -73,8 +110,6 @@ function openWin(id) {
     if (iframe && !iframe.getAttribute('src')) iframe.src = `http://${location.hostname}:8080`;
   }
 
-  // Restore display before WinBox mounts (content starts display:none to avoid
-  // unmounted win-content divs inflating the document body height)
   content.style.display = '';
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
@@ -84,13 +119,18 @@ function openWin(id) {
     mount: content,
     onclose() {
       content.style.display = 'none';
-      delete wins[id]; dockMark(id, false); return false;
+      delete wins[id];
+      removeTaskbarTab(id);
+      return false;
     },
-    onfocus() { dockMark(id, true); },
-    onblur()  { /* keep mark while open */ },
+    onfocus()    { updateTab(id, 'active'); },
+    onblur()     { updateTab(id, 'open'); },
+    onminimize() { updateTab(id, 'minimized'); },
+    onrestore()  { updateTab(id, 'active'); },
   });
 
-  dockMark(id, true);
+  createTaskbarTab(id, cfg.title);
+  updateTab(id, 'active');
 }
 
 function closeWin(id) {
@@ -100,12 +140,7 @@ function closeWin(id) {
 function toggleWin(id) {
   if (!wins[id]) { openWin(id); return; }
   if (wins[id].min) { wins[id].restore(); wins[id].focus(); }
-  else               { wins[id].minimize(); }
-}
-
-function dockMark(id, active) {
-  const btn = document.getElementById(`dock-${id}`);
-  if (btn) btn.classList.toggle('open', active);
+  else              { wins[id].minimize(); }
 }
 
 // ─── Override transitionToApp for the desktop skin ───────────────────────────
@@ -242,9 +277,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('hdr-evo')?.addEventListener('click', () => {
     if (typeof showEvoModal === 'function') showEvoModal();
   });
-  // Logo dblclick → sessions modal (apexos_history localStorage is never written;
-  // the server-side sessions modal is the right UX for desktop)
+  // Logo dblclick → sessions modal
   document.getElementById('hdr-logo')?.addEventListener('dblclick', () => {
     if (typeof showSessionModal === 'function') showSessionModal();
+  });
+
+  // Click outside start menu to close it
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('start-menu');
+    const startBtn = document.getElementById('start-btn');
+    if (menu && !menu.classList.contains('hidden') &&
+        !menu.contains(e.target) && e.target !== startBtn) {
+      closeStartMenu();
+    }
   });
 });

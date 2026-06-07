@@ -69,17 +69,31 @@
       </div>
     </div>
 
-    <!-- Dock -->
+    <!-- Taskbar -->
     <div id="dock">
-      <button class="dock-btn" id="dock-agent"    onclick="toggleWin('agent')"     title="Agent">🤖<span>Agent</span></button>
-      <button class="dock-btn" id="dock-sensors"  onclick="toggleWin('sensors')"   title="Sensors">📡<span>Sensors</span></button>
-      <button class="dock-btn" id="dock-cerebro"  onclick="toggleWin('cerebro')"   title="Cerebro">🧠<span>Cerebro</span></button>
-      <button class="dock-btn" id="dock-sensorhead" onclick="toggleWin('sensorhead')" title="Sensor Head">👁<span>Sense</span></button>
-      <div class="dock-divider"></div>
-      <button class="dock-btn" id="dock-settings" onclick="toggleWin('settings')"  title="Settings">⚙<span>Settings</span></button>
+      <button id="start-btn" onclick="toggleStartMenu()">⬡ APEX</button>
+      <div class="taskbar-sep"></div>
+      <div id="taskbar-tabs"></div>
     </div>
 
   </div><!-- #app -->
+
+  <!-- Start menu (fixed above taskbar; hidden until start-btn clicked) -->
+  <div id="start-menu" class="hidden">
+    <div class="sm-pane sm-left">
+      <div class="sm-section-title">APPLICATIONS</div>
+      <button class="sm-item" onclick="launchApp('agent')"><span class="sm-emoji">🤖</span>Agent</button>
+      <button class="sm-item" onclick="launchApp('sensors')"><span class="sm-emoji">📡</span>Sensors</button>
+      <button class="sm-item" onclick="launchApp('cerebro')"><span class="sm-emoji">🧠</span>Cerebro</button>
+      <button class="sm-item" onclick="launchApp('sensorhead')"><span class="sm-emoji">👁</span>Sensor Head</button>
+    </div>
+    <div class="sm-pane sm-right">
+      <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
+      <div class="sm-spacer"></div>
+      <div class="sm-divider"></div>
+      <button class="sm-item sm-power" onclick="closeStartMenu(); showPowerModal()"><span class="sm-emoji">⏻</span>Power</button>
+    </div>
+  </div>
 
   <!-- ─── Window content (hidden until WinBox mounts them; display restored by openWin) -->
 

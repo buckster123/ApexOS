@@ -19,7 +19,7 @@
   --radius:      8px;
   --radius-sm:   4px;
   --topbar-h:    42px;
-  --dock-h:      64px;
+  --dock-h:      48px;
   --wb-bg:       #131620;
 }
 
@@ -144,34 +144,119 @@ html, body {
   user-select: none;
 }
 
-/* ─── Dock ────────────────────────────────────────────────────────────────── */
+/* ─── Taskbar ─────────────────────────────────────────────────────────────── */
 #dock {
   height: var(--dock-h);
   max-height: var(--dock-h);
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 0 16px;
-  background: rgba(19,22,32,0.88);
+  display: flex; align-items: center;
+  padding: 0 8px 0 6px;
+  background: rgba(13,15,24,0.96);
   backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   overflow: hidden;
   z-index: 1000;
+  gap: 0;
 }
-.dock-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 6px 12px;
+
+#start-btn {
+  height: 34px; padding: 0 14px;
+  background: var(--accent);
+  color: #000;
+  border: none; border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 12px; font-weight: 800;
+  letter-spacing: 0.05em;
+  cursor: pointer; flex-shrink: 0;
+  transition: background 0.12s;
+}
+#start-btn:hover  { background: #5fffad; }
+#start-btn:active { background: #2ee80a; }
+
+.taskbar-sep {
+  width: 1px; height: 26px;
+  background: var(--border);
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+#taskbar-tabs {
+  flex: 1; display: flex; align-items: center;
+  gap: 4px; overflow-x: auto; overflow-y: hidden;
+  height: 100%; padding: 0 2px;
+}
+#taskbar-tabs::-webkit-scrollbar { height: 2px; }
+#taskbar-tabs::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 1px; }
+
+.taskbar-tab {
+  height: 32px; min-width: 100px; max-width: 180px;
+  padding: 0 12px;
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  cursor: pointer; color: var(--text-dim);
-  font-size: 22px; transition: all 0.15s;
-  position: relative;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-family: var(--mono); font-size: 11px;
+  cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  transition: all 0.12s; flex-shrink: 0;
 }
-.dock-btn span { font-size: 9px; font-family: var(--mono); letter-spacing: 0.05em; }
-.dock-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--border-hi); color: var(--text); transform: translateY(-2px); }
-.dock-btn.open { border-color: var(--accent2); }
-.dock-btn.open::after { content: ''; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; border-radius: 50%; background: var(--accent2); }
-.dock-divider { width: 1px; height: 36px; background: var(--border); margin: 0 4px; }
+.taskbar-tab:hover     { background: rgba(255,255,255,0.08); border-color: var(--border-hi); color: var(--text); }
+.taskbar-tab.tab-active    { background: rgba(108,138,255,0.18); border-color: rgba(108,138,255,0.55); color: var(--text-bright); }
+.taskbar-tab.tab-minimized { color: var(--text-dim); opacity: 0.55; font-style: italic; }
+
+/* Hide WinBox's own minimize bar — taskbar tabs are the restore handle */
+.winbox.minimize { display: none !important; }
+
+/* ─── Start menu ──────────────────────────────────────────────────────────── */
+#start-menu {
+  position: fixed;
+  bottom: var(--dock-h);
+  left: 4px;
+  width: 360px;
+  display: flex;
+  background: rgba(16,19,30,0.98);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -6px 28px rgba(0,0,0,0.65);
+  z-index: 9500;
+  overflow: hidden;
+}
+#start-menu.hidden { display: none !important; }
+
+.sm-pane {
+  display: flex; flex-direction: column;
+  padding: 10px 4px;
+}
+.sm-left {
+  flex: 1; min-width: 0;
+  border-right: 1px solid var(--border);
+}
+.sm-right {
+  width: 130px; flex-shrink: 0;
+}
+
+.sm-section-title {
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.12em; color: var(--text-dim);
+  padding: 2px 12px 8px;
+}
+
+.sm-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px;
+  background: transparent; border: none;
+  color: var(--text);
+  font-family: var(--mono); font-size: 12px;
+  cursor: pointer; text-align: left; width: 100%;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s;
+}
+.sm-item:hover { background: rgba(108,138,255,0.14); color: var(--text-bright); }
+.sm-emoji { font-size: 15px; width: 22px; text-align: center; flex-shrink: 0; }
+.sm-spacer { flex: 1; }
+.sm-divider { height: 1px; background: var(--border); margin: 4px 8px; }
+.sm-power { color: rgba(255,107,107,0.85); }
+.sm-power:hover { background: rgba(255,107,107,0.1) !important; }
 
 /* ─── WinBox theming ──────────────────────────────────────────────────────── */
 .wb-apexos .wb-header {
