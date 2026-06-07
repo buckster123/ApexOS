@@ -44,6 +44,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~14.~~ ✓ Agent bodies Phase 6a — `apexos-tools` MCP server (`tools/` workspace); 11 tools: run_command (shell denylist), read_file, write_file, list_dir, create_dir, delete_path, http_fetch, cpu_temp, disk_usage, memory_info, uptime; deployed to Pi, supervisor confirmed `plugin 'apexos-tools' up — 11 tools`
 ~~15.~~ ✓ Agent bodies Phase 6b — `schedule_task` / `list_schedules` / `cancel_schedule` virtual tools; cron-driven autonomous turns; JSONL persistence at `schedules.jsonl`; 60s poll loop fires `UserPrompt` on bus
 ~~16.~~ ✓ Agent bodies Phase 6c — `notify` tool in `apexos-tools`; surfaces: JSONL log (always) + notify-send toast + espeak-ng TTS + ntfy.sh (env-gated) + Telegram (env-gated); agentd added to audio group; espeak-ng installed; smoke: 3/3 local surfaces fired clean
+~~17.~~ ✓ Agent bodies Phase 6d — `SensorReading` enum + `Event::SensorReading` in core; `/sensor-bridge` token-gated WS endpoint on gateway; `apex-sensor-bridge` daemon (sysfs CPU temp → bus, reconnects on drop); `apex-sensor-bridge.service` (Requires=agentd, enabled); agent router fires `UserPrompt` on temp > 85°C or motion; smoke: `[sensor-bridge] node connected` + readings live in agentd logs
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)

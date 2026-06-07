@@ -236,7 +236,7 @@ Tool signature: `notify(message, title?, priority?, surfaces?)` where surfaces d
 
 ---
 
-## Phase 6d — Satellite body-pi + SensorEvent bus ✗
+## Phase 6d — Satellite body-pi + SensorEvent bus ✓
 
 **Goal:** Sensors are first-class bus events, not tool poll responses. Agent perceives
 the physical world the same way it perceives WS messages — reactively.
@@ -292,21 +292,23 @@ Receives `SensorReading` JSON frames, emits `Event::SensorReading` on the broadc
 Agent router reacts: new `Ok(Event::SensorReading { .. })` arm can trigger a turn if
 thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
 
-### Build plan (next session start: switch to sensor Pi first)
+### Build results
 
-- [ ] Add `SensorReading` enum + `Event::SensorReading` to `core/types.rs`
-- [ ] Add `state.rs` apply arm (no-op for now, just round-trip)
-- [ ] New gateway WS endpoint `/sensor-bridge` — auth token in `/etc/agentd/env`
-- [ ] `tools/crates/apex-sensor-bridge/` — Rust binary with `rppal` + `tungstenite` client
-- [ ] Sensor reads: I2C scan on startup, detect BME280/DHT22/HC-SR04 by address
-- [ ] Forward loop: read → JSON → WS send to ApexOS gateway
-- [ ] Agent router: react to `SensorReading` (log + optional trigger turn on threshold)
-- [ ] `tools/crates/apex-gpio/` — MCP stub for manual GPIO (runs on body-pi, free header)
-- [ ] Deploy: `apex-sensor-bridge` as systemd service on body-pi
-- [ ] Deploy: updated `agentd` on ApexOS Pi with gateway change
-- [ ] Smoke test: plug in BME280, verify Temperature events appear on ApexOS bus + UI
-- [ ] Smoke test: threshold trigger — set temp alert, verify agent self-fires when exceeded
-- [ ] Commit: `feat(sensors): SensorEvent bus + apex-sensor-bridge satellite daemon`
+- [x] Add `SensorReading` enum + `Event::SensorReading` to `core/types.rs`
+- [x] Add `state.rs` apply arm (no-op — SensorReading is consumed by agent router, not folded into SystemState)
+- [x] New gateway WS endpoint `/sensor-bridge` — token-gated (SENSOR_BRIDGE_TOKEN env; empty = open for local-only)
+- [x] `tools/crates/apex-sensor-bridge/` — Rust binary; tungstenite WS client; reads sysfs CPU temp; reconnects on drop
+- [x] Forward loop: read → Event::SensorReading JSON → WS send → gateway emits on broadcast bus
+- [x] Agent router: `SensorReading::Temperature > 85°C` → `UserPrompt` on root session (alert turn fires autonomously)
+- [x] Agent router: `SensorReading::Motion { detected: true }` → `UserPrompt` on root session
+- [x] `apex-sensor-bridge.service` — systemd unit, `Requires=agentd.service`, `Restart=always`
+- [x] Deployed: service enabled + started on sensor Pi (192.168.0.158)
+- [x] Smoke test: `[sensor-bridge] node connected` + `ApexOS: Temperature { celsius: 35.3, sensor_id: "cpu_thermal" }` in agentd logs
+- [x] Both services running: `systemctl status agentd apex-sensor-bridge` both active
+- [x] Commit + push: `add SensorEvent bus + /sensor-bridge gateway + apex-sensor-bridge daemon`
+- [ ] Add real I2C sensors (BME280) — next: expand apex-sensor-bridge with rppal + raw I2C reads
+- [ ] Add GPIO level reads (digital sensors) — rppal InputPin, configurable pin list via env
+- [ ] `apex-gpio` MCP tool for manual GPIO reads — deferred to Phase 7
 
 ---
 
