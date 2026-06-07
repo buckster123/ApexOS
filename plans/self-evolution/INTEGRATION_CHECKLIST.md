@@ -84,13 +84,13 @@ No "almost done" — item is checked when tested and committed.
 
 ---
 
-## Phase 4 — Cerebro Integration + Persistence ✓ (partial)
+## Phase 4 — Cerebro Integration + Persistence ✓
 
 - [x] `ToolProxy` — `SupervisorCmd::DirectCall` + oneshot reply; supervisor handles in select loop; applier calls Cerebro tools without going through policy or bus
 - [x] Episode wrapping: `episode_start` before apply → `episode_add_step` with undo snapshot on success → `episode_end` with outcome; best-effort (Cerebro down → apply still proceeds)
 - [x] `evo_kind()` extracts proposal variant tag for episode titles; `parse_episode_id()` reads Cerebro response (fixed: MCP wraps content in `[{type:"text",text:"..."}]` array, not a bare string)
 - [x] `read_soul_md` virtual tool — agent reads live soul_arc before proposing update_system_prompt; wired via `SupervisorCmd::SetSoulArc` after engine init
-- [ ] Durable rollback: `restore_rollback_store()` at startup — calls `list_episodes` (tag: "evolution"), `get_episode_memories` per episode, parses `undo_snapshot` JSON from memory content, rebuilds `rollback_store`; EvolutionId parsed from episode title "evolution {N}: {kind}"
+- [x] Durable rollback: `restore_rollback_store()` at startup — calls `list_episodes` (agent_id: CLAUDE-APEX), `get_episode_memories` per evolution episode, parses `undo_snapshot` JSON from memory content, rebuilds `rollback_store`; EvolutionId parsed from episode title "evolution {N}: {kind}"; verified on Pi (3 episodes found, restore ran at Cerebro ready time ~6s post-start)
 - [ ] Full RegisterMcpServer end-to-end test: register a live plugin via propose_evolution, verify PluginUp fires, verify UnregisterMcpServer tears it down
 - [ ] Rust-native code generation for new virtual tools (out of scope until Phase 5+)
 
