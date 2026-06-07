@@ -37,6 +37,7 @@ ui/               Frontend — index.html + style.css + app.js (served by axum S
 ~~10.~~ ✓ Cage kiosk — seatd backend, `agentos-kiosk` user (video group), `cage-kiosk.service` auto-starts; Wayland socket live; headless-safe (3 retries then stops)
 ~~11.~~ ✓ Frontend controls — cancel (Esc), power modal (reboot/shutdown + 3s countdown), model selector (live Arc swap), policy badge, new session (Ctrl+K + localStorage history), timestamps, collapse-all tools
 ~~12.~~ ✓ Self-evolution — `propose_evolution` / `rollback_evolution` / `read_soul_md` virtual tools; live apply of UpdateSystemPrompt/UpdatePolicyRule/RegisterMcpServer/HotReload; Cerebro episode wrapping (memory_store→episode_add_step); frontend evolution modal + stats; dogfood verified
+~~13.~~ ✓ Session persistence + multi-client sync — `session_store` crate (append-only JSONL per session); server-issued session IDs (AtomicU64, survives restart); WS hello/session_init handshake; history replay with full thinking-block context; session picker modal (Ctrl+Shift+S); cage kiosk + browser share live session; verified: agent quotes prior messages verbatim after F5
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)

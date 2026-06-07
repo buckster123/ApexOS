@@ -96,7 +96,7 @@ No "almost done" — item is checked when tested and committed.
 
 ---
 
-## Phase 5 — Session Persistence + Multi-Client Sync
+## Phase 5 — Session Persistence + Multi-Client Sync ✓
 
 **Goal:** Sessions survive daemon restarts; cage kiosk and web browser share the same live session.
 
