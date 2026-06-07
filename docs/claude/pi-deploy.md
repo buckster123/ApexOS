@@ -63,6 +63,23 @@ sudo journalctl -u agentd -n 20 --no-pager
 - System packages (rpds-py, PyYAML) conflict with pip if not using venv
 - `/tmp` is tmpfs 2GB — large pip installs must use `TMPDIR=/var/pip-tmp`
 
+## Sensor head system packages (required for sensor-head-mcp tools)
+
+These are system apt packages that must be installed on the Pi for the IMX500 AI camera tools:
+
+```bash
+sudo apt-get install -y python3-opencv    # detect_objects, classify_scene (cv2)
+sudo apt-get install -y imx500-all        # firmware + model .rpk files in /usr/share/imx500-models/
+```
+
+`python3-opencv` is picked up automatically by SensorHead venv via the existing `system-picamera2.pth`
+that already points `/usr/lib/python3/dist-packages` into the venv — no venv changes needed.
+
+`imx500-all` installs the EfficientDet Lite0 (`imx500_network_efficientdet_lite0_pp.rpk`) and
+MobileNetV2 (`imx500_network_mobilenet_v2.rpk`) model files required by `detect_objects` and
+`classify_scene`. Without it, those endpoints return 500 with "Firmware file … does not exist."
+Restart `sensorhead-dashboard` after installing to load the new models.
+
 ## EnvironmentFile format
 `/etc/agentd/env` must be plain `KEY=VALUE` (no `export`, no quotes unless value has spaces):
 ```

@@ -321,6 +321,10 @@ thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
       - Registered in /etc/agentd/plugins.toml; `plugin 'sensor-head' up — 8 tools` confirmed
       - Policy rules added (sense/read/detect/classify/status = allow; capture = ask)
       - Smoke: sense_environment returns 20.56°C, 63.42% RH, IAQ 50 (excellent); read_thermal min 25.4 / max 33.6°C
+      - detect_objects + classify_scene: required `sudo apt-get install -y python3-opencv imx500-all` on Pi
+        cv2 auto-available in SensorHead venv via existing system-picamera2.pth; imx500 model .rpk files install to /usr/share/imx500-models/
+        EfficientDet Lite0: 33.8ms on-chip inference; MobileNetV2: 7.9ms — all 8 tools confirmed working
+      - capture_night (imx708_wide_noir, cam0): 406KB JPEG confirmed; previous misfire was transient (dashboard restart)
 - [ ] Add GPIO level reads (digital sensors) — rppal InputPin, configurable pin list via env
 - [ ] `apex-gpio` MCP tool for manual GPIO reads — deferred to Phase 7
 
