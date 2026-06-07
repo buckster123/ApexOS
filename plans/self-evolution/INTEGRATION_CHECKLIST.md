@@ -90,9 +90,34 @@ No "almost done" — item is checked when tested and committed.
 - [x] Episode wrapping: `episode_start` before apply → `episode_add_step` with undo snapshot on success → `episode_end` with outcome; best-effort (Cerebro down → apply still proceeds)
 - [x] `evo_kind()` extracts proposal variant tag for episode titles; `parse_episode_id()` reads Cerebro response (fixed: MCP wraps content in `[{type:"text",text:"..."}]` array, not a bare string)
 - [x] `read_soul_md` virtual tool — agent reads live soul_arc before proposing update_system_prompt; wired via `SupervisorCmd::SetSoulArc` after engine init
-- [ ] Durable rollback: on cold-start (daemon restarted), recover undo proposal from Cerebro episode instead of in-memory store
+- [ ] Durable rollback: `restore_rollback_store()` at startup — calls `list_episodes` (tag: "evolution"), `get_episode_memories` per episode, parses `undo_snapshot` JSON from memory content, rebuilds `rollback_store`; EvolutionId parsed from episode title "evolution {N}: {kind}"
 - [ ] Full RegisterMcpServer end-to-end test: register a live plugin via propose_evolution, verify PluginUp fires, verify UnregisterMcpServer tears it down
 - [ ] Rust-native code generation for new virtual tools (out of scope until Phase 5+)
+
+---
+
+## Phase 5 — Session Persistence + Multi-Client Sync
+
+**Goal:** Sessions survive daemon restarts; cage kiosk and web browser share the same live session.
+
+**Root cause of current disconnect:** JS localStorage assigns session IDs independently per browser tab/client. No server-side session state — histories are in-memory only, wiped on restart.
+
+### 5a — Server-side session persistence
+- [ ] `store/session_store.rs` — append-only JSONL per session under `$AGENTD_LOG/sessions/{session_id}.jsonl`; `sessions/index.jsonl` for metadata (created_at, last_active, message_count)
+- [ ] Append User + Assistant messages immediately on bus events (hook into agent router or event log writer)
+- [ ] On daemon startup: scan sessions dir, load recent N sessions into `histories` HashMap (restore conversation history across restarts)
+- [ ] `/api/sessions` gateway endpoint — returns [{session_id, created_at, last_active, preview}]
+
+### 5b — Server-side session ID issuance + WS handshake
+- [ ] WS connect handshake: client sends `{"type":"hello","resume_session":"sid_xxx"}` (or omits for new session); server responds `{"type":"session_init","session_id":"sid_xxx","history":[...]}`
+- [ ] Server issues session IDs (UUID or sequential); client stores in localStorage and sends on reconnect
+- [ ] History replay on join: gateway sends history as a `session_history` burst to the newly connected WS client only (not broadcast)
+- [ ] Any two clients sending the same session_id join the same live session — cage kiosk + web browser converge
+
+### 5c — UI
+- [ ] `app.js`: send hello frame on connect with localStorage session ID; handle `session_init` to pre-populate chat history
+- [ ] Session picker modal: list recent sessions from `/api/sessions`, click to resume; keyboard shortcut
+- [ ] New session = clear localStorage session ID → server issues fresh ID
 
 ---
 
