@@ -154,6 +154,17 @@ async fn main() -> anyhow::Result<()> {
     // ToolProxy — lets the evolution applier call Cerebro tools directly for episode tracking.
     let tool_proxy = ToolProxy::new(sv_cmd_tx.clone());
 
+    // Restore rollback snapshots from Cerebro evolution episodes on startup (best-effort).
+    // CerebroCortex needs a moment to start; we wait then populate rollback_store from episodes.
+    {
+        let proxy = tool_proxy.clone();
+        let store = Arc::clone(&rollback_store);
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            restore_rollback_store(&proxy, &store).await;
+        });
+    }
+
     // Evolution applier — subscribes to EvolutionProposed and applies changes live.
     spawn_evolution_applier(
         bcast.subscribe(),
@@ -403,6 +414,80 @@ async fn episode_end(proxy: &ToolProxy, episode_id: &Option<String>, outcome: &s
     })).await {
         eprintln!("[evolution] episode_end: {e}");
     }
+}
+
+/// On cold-start: read all Cerebro evolution episodes, parse undo snapshots, rebuild rollback_store.
+/// Best-effort — if Cerebro is unavailable, rollback_store stays empty and apply still works.
+async fn restore_rollback_store(
+    proxy:          &ToolProxy,
+    rollback_store: &Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>>,
+) {
+    let text = match proxy.call("list_episodes", serde_json::json!({
+        "agent_id": "CLAUDE-APEX",
+        "limit":    200
+    })).await {
+        Ok(out) if out.ok => match mcp_text(&out) {
+            Some(t) => t,
+            None    => { eprintln!("[evolution] restore: no text from list_episodes"); return; }
+        },
+        Ok(out) => { eprintln!("[evolution] restore: list_episodes not ok: {:?}", out.content); return; }
+        Err(e)  => { eprintln!("[evolution] restore: list_episodes: {e}"); return; }
+    };
+
+    let mut count = 0usize;
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with("- ep_") { continue; }
+        let line = &line[2..]; // strip "- "
+
+        let (episode_id, rest) = match line.split_once(": ") {
+            Some(pair) => pair,
+            None       => continue,
+        };
+        let title = match rest.split_once(" | steps:") {
+            Some((t, _)) => t,
+            None         => rest,
+        };
+        if !title.starts_with("evolution ") { continue; }
+
+        let evo_id = match parse_evolution_id_from_title(title) {
+            Some(id) => id,
+            None     => { eprintln!("[evolution] restore: can't parse id from '{title}'"); continue; }
+        };
+
+        let mems_text = match proxy.call("get_episode_memories", serde_json::json!({
+            "episode_id": episode_id,
+            "agent_id":   "CLAUDE-APEX"
+        })).await {
+            Ok(out) if out.ok => match mcp_text(&out) { Some(t) => t, None => continue },
+            _ => continue,
+        };
+
+        if let Some(proposal) = parse_undo_snapshot_from_text(&mems_text) {
+            rollback_store.lock().await.insert(evo_id, proposal);
+            count += 1;
+        }
+    }
+
+    eprintln!("[evolution] restore: loaded {count} rollback snapshot(s) from Cerebro");
+}
+
+fn parse_evolution_id_from_title(title: &str) -> Option<EvolutionId> {
+    // "evolution {N}: {kind}"
+    let rest  = title.strip_prefix("evolution ")?;
+    let colon = rest.find(':')?;
+    let n: u64 = rest[..colon].trim().parse().ok()?;
+    Some(EvolutionId(n))
+}
+
+fn parse_undo_snapshot_from_text(text: &str) -> Option<EvolutionProposal> {
+    // Memory content: "evolution apply: {summary}\nundo_snapshot: {compact_json}"
+    // compact_json has no literal newlines (serde_json::to_string escapes them).
+    let marker = "undo_snapshot: ";
+    let start  = text.find(marker)? + marker.len();
+    let rest   = &text[start..];
+    let end    = rest.find('\n').unwrap_or(rest.len());
+    serde_json::from_str(&rest[..end]).ok()
 }
 
 /// Snapshot current state to produce an inverse proposal (for rollback).
