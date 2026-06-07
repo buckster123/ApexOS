@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""sensor-head-mcp — MCP plugin that proxies to the SensorHead dashboard REST API.
+
+Speaks JSON-RPC 2.0 over stdio. All reads route to http://localhost:8080 so the
+dashboard process is the single owner of the I2C bus and BSEC2 calibration state.
+
+No external Python deps — stdlib only (urllib, base64, json, sys).
+"""
+
+import sys
+import json
+import base64
+import urllib.request
+import urllib.error
+
+DASHBOARD = "http://localhost:8080"
+
+TOOLS = [
+    {
+        "name": "sense_environment",
+        "description": (
+            "Read the BME688 environmental sensor (nose). Returns temperature, humidity, "
+            "pressure, IAQ index (0-500, lower = cleaner air), CO₂ equivalent, and breath "
+            "VOC equivalent via BSEC2 v2.6.1.0. IAQ accuracy 0=stabilizing → 3=calibrated "
+            "(full calibration takes ~48h of continuous power)."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "read_thermal",
+        "description": (
+            "Read the MLX90640 32×24 thermal camera (right eye). Returns min, max, and mean "
+            "temperature across the full scene in °C. Good for presence detection, finding "
+            "heat sources, or checking if something is warm."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "sense_thermal",
+        "description": (
+            "Capture an ironbow heatmap image from the MLX90640 thermal camera. "
+            "Colormap: black/blue = cold, red/orange = warm, yellow/white = hot. "
+            "Returns a JPEG at 320×240 showing heat distribution across the scene."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "capture_visual",
+        "description": (
+            "Capture a photo from the IMX500 AI Camera (CAM0, left eye). "
+            "Full colour, 2028×1520, best in daylight. Returns a JPEG image."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "capture_night",
+        "description": (
+            "Capture a photo from the IMX708 Wide NoIR camera (CAM1, right eye). "
+            "Wide angle, no IR filter — sees in total darkness with IR illumination. "
+            "2304×1296 JPEG. Better low-light performance than the IMX500."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "detect_objects",
+        "description": (
+            "Detect objects in the scene using the IMX500's on-chip EfficientDet neural network "
+            "(80 COCO classes: person, chair, laptop, cup, bottle…). Inference runs entirely on "
+            "the sensor chip — zero CPU load. Returns detections with label, confidence, bbox."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number",
+                    "description": "Minimum confidence threshold 0.0–1.0 (default 0.3)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "classify_scene",
+        "description": (
+            "Classify what the IMX500 camera is looking at using on-chip MobileNetV2 "
+            "(1000 ImageNet categories). ~8ms per inference on the sensor chip. "
+            "Returns top-K predictions with labels and confidence scores."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "top_k": {
+                    "type": "integer",
+                    "description": "Number of top predictions to return (default 5)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_head_status",
+        "description": (
+            "Full health check of all sensor head hardware. "
+            "Shows I2C devices detected, BME688 calibration state, MLX90640 status, "
+            "camera availability, and system memory."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
+
+def http_get(path: str, timeout: int = 12) -> bytes:
+    with urllib.request.urlopen(DASHBOARD + path, timeout=timeout) as r:
+        return r.read()
+
+
+def http_get_json(path: str) -> str:
+    raw = http_get(path)
+    try:
+        return json.dumps(json.loads(raw), indent=2)
+    except Exception:
+        return raw.decode("utf-8", errors="replace")
+
+
+def http_get_image_b64(path: str) -> str:
+    raw = http_get(path, timeout=20)
+    return base64.b64encode(raw).decode("ascii")
+
+
+def call_tool(name: str, args: dict) -> dict:
+    try:
+        if name == "sense_environment":
+            return {"content": [{"type": "text", "text": http_get_json("/api/environment")}], "isError": False}
+
+        if name == "read_thermal":
+            raw = json.loads(http_get("/api/thermal/data"))
+            raw.pop("frame", None)  # drop 768-value pixel array; keep stats only
+            return {"content": [{"type": "text", "text": json.dumps(raw, indent=2)}], "isError": False}
+
+        if name == "sense_thermal":
+            b64 = http_get_image_b64("/api/thermal/heatmap")
+            return {"content": [{"type": "image", "data": b64, "mimeType": "image/jpeg"}], "isError": False}
+
+        if name == "capture_visual":
+            b64 = http_get_image_b64("/api/capture/visual")
+            return {"content": [{"type": "image", "data": b64, "mimeType": "image/jpeg"}], "isError": False}
+
+        if name == "capture_night":
+            b64 = http_get_image_b64("/api/capture/night")
+            return {"content": [{"type": "image", "data": b64, "mimeType": "image/jpeg"}], "isError": False}
+
+        if name == "detect_objects":
+            conf = args.get("confidence", 0.3)
+            return {"content": [{"type": "text", "text": http_get_json(f"/api/detect?confidence={conf}")}], "isError": False}
+
+        if name == "classify_scene":
+            k = args.get("top_k", 5)
+            return {"content": [{"type": "text", "text": http_get_json(f"/api/classify?top_k={k}")}], "isError": False}
+
+        if name == "get_head_status":
+            return {"content": [{"type": "text", "text": http_get_json("/api/status")}], "isError": False}
+
+        return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}
+
+    except urllib.error.URLError as e:
+        return {"content": [{"type": "text", "text": f"SensorHead dashboard unreachable: {e}"}], "isError": True}
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Tool error ({name}): {e}"}], "isError": True}
+
+
+def handle(req: dict) -> dict | None:
+    method = req.get("method", "")
+    req_id = req.get("id")
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0", "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "sensor-head", "version": "0.4.1"},
+            },
+        }
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}
+
+    if method == "tools/call":
+        params = req.get("params", {})
+        result = call_tool(params.get("name", ""), params.get("arguments", {}))
+        return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+    if method in ("notifications/initialized", "notifications/cancelled"):
+        return None  # one-way, no response
+
+    return {
+        "jsonrpc": "2.0", "id": req_id,
+        "error": {"code": -32601, "message": f"Method not found: {method}"},
+    }
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        resp = handle(req)
+        if resp is not None:
+            sys.stdout.write(json.dumps(resp) + "\n")
+            sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()
