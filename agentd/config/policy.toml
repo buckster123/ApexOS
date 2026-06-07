@@ -22,6 +22,7 @@ mode = "suggest"
 "cerebro.*"   = "allow"        # memory ops are safe
 "net.*"       = "ask"
 "agent.spawn"       = "ask"    # gate sub-agent fan-out / depth
+"read_soul_md"       = "allow"  # read-only, no side effects
 "propose_evolution"  = "ask"    # structural changes require explicit user approval before apply
 "rollback_evolution" = "ask"    # rollback is destructive — always confirm
 

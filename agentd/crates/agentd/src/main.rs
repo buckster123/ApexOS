@@ -142,6 +142,11 @@ async fn main() -> anyhow::Result<()> {
     ));
     let soul_arc = engine.system_arc();
 
+    // Share soul_arc with the supervisor so read_soul_md returns live content.
+    if sv_cmd_tx.send(SupervisorCmd::SetSoulArc { arc: soul_arc.clone() }).await.is_err() {
+        eprintln!("[agentd] warning: failed to share soul_arc with supervisor");
+    }
+
     // Rollback store: undo snapshots indexed by EvolutionId (in-memory, cleared on restart).
     let rollback_store: Arc<Mutex<HashMap<EvolutionId, EvolutionProposal>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -323,8 +328,15 @@ fn evo_kind(proposal: &EvolutionProposal) -> String {
 }
 
 fn parse_episode_id(output: &apexos_core::ToolOutput) -> Option<String> {
-    let text = output.content.as_str()?;
-    serde_json::from_str::<serde_json::Value>(text).ok()
+    // MCP tool results wrap content in an array of typed blocks: [{type:"text", text:"..."}]
+    let text = match &output.content {
+        serde_json::Value::Array(blocks) => blocks.iter()
+            .find_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .map(str::to_owned)?,
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    serde_json::from_str::<serde_json::Value>(&text).ok()
         .and_then(|v| v.get("episode_id").and_then(|id| id.as_str()).map(str::to_owned))
 }
 
@@ -334,7 +346,10 @@ async fn episode_start(proxy: &ToolProxy, evo_id: EvolutionId, kind: &str) -> Op
         "description": format!("agentd self-evolution apply — {kind}"),
         "agent_id":    "CLAUDE-APEX"
     })).await {
-        Ok(out) if out.ok => parse_episode_id(&out),
+        Ok(out) if out.ok => {
+            eprintln!("[evolution] episode_start raw: {:?}", out.content);
+            parse_episode_id(&out)
+        }
         Ok(out) => {
             eprintln!("[evolution] episode_start not ok: {:?}", out.content); None
         }
@@ -697,6 +712,7 @@ async fn gather_tools(
         .cloned()
         .collect();
     tools.push(agent_spawn_spec());
+    tools.push(read_soul_md_spec());
     tools.push(propose_evolution_spec());
     tools.push(rollback_evolution_spec());
     tools
@@ -720,6 +736,20 @@ fn agent_spawn_spec() -> ToolSpec {
                 }
             },
             "required": ["prompt"]
+        }),
+    }
+}
+
+fn read_soul_md_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "read_soul_md".into(),
+        description: "Read the current live content of /etc/agentd/soul.md (your system prompt). \
+                      ALWAYS call this before propose_evolution with kind=update_system_prompt \
+                      so you work from the current content, not your in-context snapshot.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
         }),
     }
 }
@@ -768,7 +798,8 @@ fn propose_evolution_spec() -> ToolSpec {
                 },
                 "content": {
                     "type":        "string",
-                    "description": "Full replacement text for /etc/agentd/soul.md (update_system_prompt)."
+                    "description": "Full replacement text for /etc/agentd/soul.md (update_system_prompt). \
+                                    Call read_soul_md first to get the current content before editing."
                 },
                 "subsystem": {
                     "type":        "string",
