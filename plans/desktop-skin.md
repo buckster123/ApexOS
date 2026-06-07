@@ -85,53 +85,101 @@ so gateway stays decoupled from the policy crate.
 
 ---
 
-## Phase B — App ecosystem (next)
+## Phase B — System tools (next)
 
-**Terminal window**
-- Add `xterm.js` + `xterm-addon-fit.js` to `ui/lib/` (~200KB)
-- New window type `terminal` with `<div id="terminal-container">`
-- WS protocol extension: new `TermInput` / `TermOutput` events on the bus
-- OR: wire directly to `run_command` tool — each Enter sends a `UserPrompt` with
-  the command, agent runs it in auto-edit mode, streams stdout back
-- Simpler WS-native approach: `/terminal-ws` endpoint that opens a PTY via tokio-pty
+**CLI `!` passthrough + slash commands**
+- `!cmd` prefix in CLI input → intercepted client-side → `/api/run` POST → streams stdout back into chat output
+- Slash commands: `/help`, `/status`, `/sessions` etc. — pure frontend dispatch
+- Same `/api/run` endpoint powers the desktop terminal window
+- Gateway route: `POST /api/run` → calls `run_command` tool directly (bypasses agent turn engine), streams response as SSE
+
+**Terminal window (desktop)**
+- Add `xterm.js` + `xterm-addon-fit.js` to `ui/lib/` (~200KB total)
+- New `terminal` entry in WIN_DEFAULTS + `win-terminal-content` div with `<div id="terminal-xterm">`
+- Option A (simple): wire to `/api/run` — each Enter sends command, stdout streams back. No PTY, no interactive programs.
+- Option B (full): `/terminal-ws` WebSocket endpoint + `tokio-pty` crate → real PTY, interactive programs (vim, top, etc.)
+- Start with Option A; upgrade to B if needed.
+
+**Dock redesign — start menu + minimize-to-taskbar**
+- Remove sticky app icons from dock; replace with a single **⬡ Start** button (bottom-left)
+- Start button opens a drop-up grid of all available apps (agent, sensors, cerebro, sensorhead, settings, terminal, camera, etc.)
+- **Taskbar**: running/minimized apps appear as labeled tabs at the bottom. Tab disappears when app is fully closed.
+- WinBox `.minimize()` already works — wire `onminimize` to add a taskbar tab, `onrestore`/`onclose` to remove it
+- CSS: tabs in `#dock` are dynamically created `<button class="taskbar-tab">` elements
 
 **Camera window**
 - `win-camera-content`: `<img id="camera-snapshot">` + Refresh button
-- Calls `run_command` tool: `capture_visual` or `capture_night` → reads file → base64 → img src
-- OR: dedicate a `/api/snapshot` GET route that shells out and returns the JPEG directly
+- Gateway `GET /api/snapshot` → shells `capture_visual` or `capture_night` → returns JPEG bytes directly
 
-**Policy rules GET**
-- Add `/api/policy/rules` GET in gateway — reads `PolicyConfig` from `Arc<RwLock<PolicyEngine>>`
-  and returns per-tool rules as JSON
-- Needs `policy_arc: Arc<RwLock<PolicyEngine>>` added to `GatewayState`
-- Unlocks the rules table in Settings → Policy tab
+**`/api/policy/rules` GET endpoint**
+- Add `policy_arc: Arc<RwLock<PolicyEngine>>` to `GatewayState`
+- Return per-tool rules as JSON → unlocks the rules table in Settings → Policy tab
 
-**Wallpaper options**
-- Static: current ASCII logo watermark ✓
-- Live thermal: WebSocket sensor readings → canvas heatmap render
-  - `<canvas id="thermal-canvas">` in `#desktop-wallpaper`
-  - `updateThermalWallpaper(frame)` called from `onSensorReading` when `kind === 'thermal_frame'`
-  - Map 32×24 pixel values to colour gradient (cool=blue, hot=red, opacity ~15%)
+**Thermal canvas wallpaper**
+- `<canvas id="thermal-canvas">` in `#desktop-wallpaper`
+- `updateThermalWallpaper(frame)` called from sensor_reading events when `kind === 'thermal_frame'`
+- 32×24 pixel grid → colour gradient (cool=blue, hot=red, opacity ~15%)
 
 ---
 
-## Phase C — Full OS feel (later)
+## Phase C — Full OS feel
 
 **IDE window**
-- Monaco editor (`monaco-editor` CDN or bundle via `ui/lib/monaco/`)
+- Monaco editor (bundle via `ui/lib/monaco/`, ~2MB)
 - File browser panel: `list_dir` tool → tree view, click to `read_file` into editor
 - Save button → `write_file` tool
-- Heavy (~2MB bundle) — worth it for the embedded IDE use case
 
 **Sub-agent window**
-- When `agent_spawn` virtual tool fires, bus emits a `SubAgentStarted { session_id }` event
-- Desktop: intercepts event, opens a new `agent-{session_id}` window
-- Second chat panel reuses the same `output`/`input-row` HTML structure
-- `desktop-app.js` creates a fresh DOM clone of `win-agent-content` and mounts it
+- `agent_spawn` virtual tool → bus emits `SubAgentStarted { session_id }`
+- Desktop intercepts event, opens a new `agent-{session_id}` WinBox window
+- DOM clone of `win-agent-content` structure, fresh output div
 
 **Multi-wallpaper + dark/light mode**
 - Wallpaper picker in Settings → toggle: ASCII / thermal canvas / dark gradient / light
 - CSS custom properties for dark/light theme — toggle via `body.light-mode` class
+
+---
+
+## Phase D — App ecosystem
+
+**File explorer window**
+- `win-explorer-content`: sidebar tree (via `list_dir` tool) + main pane (file preview via `read_file`)
+- Click directory → expand subtree. Click file → open in preview pane (or send to IDE window).
+- Toolbar: New File, New Dir, Delete (all via apexos-tools MCP)
+
+**Notes / Notepad window**
+- Simple textarea, saves to a user-chosen path via `write_file` tool
+- Auto-saves on blur; title bar shows filename
+
+**Sketchpad window**
+- HTML5 canvas with basic draw tools (pen, eraser, colour, stroke width)
+- Save button → canvas.toDataURL() → `write_file` as PNG to `/var/lib/agentd/workspace/sketches/`
+- Agent can then `read_file` the PNG path to see the sketch (describe_image via Cerebro vision or agent reads path)
+
+**Browser / Webview window**
+- iframe + URL bar input at top
+- Useful for internal dashboards (Cerebro, SensorHead, any local service)
+- Cross-origin limits apply; mainly a quality-of-life launcher for known local ports
+
+---
+
+## Phase E — Sonus / Media
+
+See `plans/sonus-plugin.md` for full detail.
+
+**Hermes Sonus MCP port** (Python, low effort — already a FastMCP server)
+- Clone `buckster123/hermes-sonus` on Pi → venv → `pip install "hermes-sonus[mcp]"`
+- Entry point: `hermes-sonus-mcp` (stdio transport, same pattern as CerebroCortex)
+- Register in `agentd/config/plugins.toml`; set `SUNO_API_KEY` in `/etc/agentd/env`
+- ~10 tools: `generate_song`, `check_status`, `download_track`, `extend_track`,
+  `generate_lyrics`, `clone_voice_*`, `check_credits`, `generate_album`
+- EEG layer (OpenBCI) deferred — skip for now
+
+**Media player window**
+- `win-player-content`: track list + waveform/progress bar + play/pause/skip controls
+- Agent calls `generate_song` → polls `check_status` → `download_track` to `/var/lib/agentd/workspace/sonus/`
+- Gateway serves `/api/sonus/files` → returns file list; player fetches and plays via HTML `<audio>`
+- Agent DJ: agent can queue next track based on context, sensor data, or user prompt
 
 ---
 
