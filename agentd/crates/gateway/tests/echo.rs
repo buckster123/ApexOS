@@ -16,7 +16,7 @@ async fn user_prompt_echoes_back() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let state = GatewayState { bus: handle, bcast, api_key: Arc::new(tokio::sync::RwLock::new(String::new())), model: Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())), policy_mode: "SUGGEST".into(), ui_dir: PathBuf::from("."), events_dir: PathBuf::from(".") };
+    let state = GatewayState { bus: handle, bcast, api_key: Arc::new(tokio::sync::RwLock::new(String::new())), model: Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())), policy_mode: "SUGGEST".into(), ui_dir: PathBuf::from("."), events_dir: PathBuf::from("."), sessions_dir: PathBuf::from(".") };
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
 
     let (mut ws, _) = connect_async(format!("ws://{}/ws", addr)).await.unwrap();
@@ -56,7 +56,7 @@ async fn multiple_clients_both_receive_broadcast() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let state = GatewayState { bus: handle, bcast, api_key: Arc::new(tokio::sync::RwLock::new(String::new())), model: Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())), policy_mode: "SUGGEST".into(), ui_dir: PathBuf::from("."), events_dir: PathBuf::from(".") };
+    let state = GatewayState { bus: handle, bcast, api_key: Arc::new(tokio::sync::RwLock::new(String::new())), model: Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())), policy_mode: "SUGGEST".into(), ui_dir: PathBuf::from("."), events_dir: PathBuf::from("."), sessions_dir: PathBuf::from(".") };
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
 
     let (mut ws1, _) = connect_async(format!("ws://{}/ws", addr)).await.unwrap();

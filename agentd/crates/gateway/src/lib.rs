@@ -17,13 +17,14 @@ use apexos_core::{BusHandle, Event};
 
 #[derive(Clone)]
 pub struct GatewayState {
-    pub bus:         BusHandle,
-    pub bcast:       broadcast::Sender<Event>,
-    pub api_key:     Arc<RwLock<String>>,
-    pub model:       Arc<RwLock<String>>,
-    pub policy_mode: String,
-    pub ui_dir:      PathBuf,
-    pub events_dir:  PathBuf,
+    pub bus:          BusHandle,
+    pub bcast:        broadcast::Sender<Event>,
+    pub api_key:      Arc<RwLock<String>>,
+    pub model:        Arc<RwLock<String>>,
+    pub policy_mode:  String,
+    pub ui_dir:       PathBuf,
+    pub events_dir:   PathBuf,
+    pub sessions_dir: PathBuf,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -35,6 +36,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/power",              post(power_handler))
         .route("/api/evolution/history",  get(evolution_history_handler))
         .route("/api/evolution/stats",    get(evolution_stats_handler))
+        .route("/api/sessions",           get(sessions_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -275,6 +277,65 @@ async fn evolution_stats_handler(State(state): State<GatewayState>) -> impl Into
         "rollback_rate":    rollback_rate,
         "by_kind":          by_kind,
     }))
+}
+
+// ── sessions ──────────────────────────────────────────────────────────────────
+
+async fn sessions_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    use apexos_core::{ContentBlock, Message};
+    use tokio::fs;
+
+    let mut sessions = Vec::new();
+    let mut rd = match fs::read_dir(&state.sessions_dir).await {
+        Ok(r) => r,
+        Err(_) => return Json(serde_json::json!([])),
+    };
+
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+        let id: u64 = match path.file_stem().and_then(|s| s.to_str())
+            .and_then(|s| s.parse().ok()) { Some(n) => n, None => continue };
+
+        let last_active = entry.metadata().await.ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let text = match fs::read_to_string(&path).await { Ok(t) => t, Err(_) => continue };
+        let message_count = text.lines().filter(|l| !l.trim().is_empty()).count();
+        if message_count == 0 { continue; }
+
+        let preview: String = text.lines()
+            .filter_map(|line| serde_json::from_str::<Message>(line).ok())
+            .find_map(|msg| {
+                if let Message::User { content } = msg {
+                    content.into_iter().find_map(|b| {
+                        if let ContentBlock::Text { text } = b { Some(text) } else { None }
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let preview: String = preview.chars().take(80).collect();
+
+        sessions.push(serde_json::json!({
+            "session_id":    id,
+            "last_active":   last_active,
+            "message_count": message_count,
+            "preview":       preview,
+        }));
+    }
+
+    sessions.sort_by(|a, b| {
+        let ta = a["last_active"].as_u64().unwrap_or(0);
+        let tb = b["last_active"].as_u64().unwrap_or(0);
+        tb.cmp(&ta)
+    });
+
+    Json(serde_json::json!(sessions))
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

@@ -1,3 +1,6 @@
+mod session_store;
+use session_store::SessionStore;
+
 use apexos_core::{
     ActionId, Bus, ContentBlock, Event, EvolutionId, EvolutionProposal, Message,
     PluginId, PolicyMode, SessionId, Subsystem, SystemState, ToolOutput, ToolSpec,
@@ -92,13 +95,14 @@ async fn main() -> anyhow::Result<()> {
     );
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
-        bus:         handle.clone(),
-        bcast:       bcast.clone(),
-        api_key:     Arc::clone(&api_key_arc),
-        model:       Arc::clone(&model_arc),
-        policy_mode: policy_mode_str,
+        bus:          handle.clone(),
+        bcast:        bcast.clone(),
+        api_key:      Arc::clone(&api_key_arc),
+        model:        Arc::clone(&model_arc),
+        policy_mode:  policy_mode_str,
         ui_dir,
-        events_dir:  log_dir.clone(),
+        events_dir:   log_dir.clone(),
+        sessions_dir: log_dir.join("sessions"),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -180,16 +184,21 @@ async fn main() -> anyhow::Result<()> {
         tool_proxy,
     );
 
+    // Session store — append-only JSONL per session; restores history across daemon restarts.
+    let session_store = Arc::new(SessionStore::new(&log_dir));
+    session_store.init().await?;
+    let initial_histories = session_store.load_all().await;
+
     // Shared state for the agent router
     let tool_reg: Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>> =
         Arc::new(RwLock::new(HashMap::new()));
     let histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+        Arc::new(Mutex::new(initial_histories));
 
     // Subscribe before supervisor so no early PluginUp events are missed.
     let agent_rx = bcast.subscribe();
     spawn_agent_router(agent_rx, bcast.clone(), handle.clone(),
-                       tool_reg, histories, engine, max_depth);
+                       tool_reg, histories, engine, max_depth, session_store);
 
     // Event log
     tokio::spawn(run_log_writer(log_dir, bcast.subscribe()));
@@ -664,13 +673,14 @@ async fn apply_evolution(
 // ── agent router ──────────────────────────────────────────────────────────────
 
 fn spawn_agent_router(
-    mut rx:    broadcast::Receiver<Event>,
-    bcast:     broadcast::Sender<Event>,
-    bus:       apexos_core::BusHandle,
-    tool_reg:  Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>>,
-    histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
-    engine:    Arc<TurnEngine>,
-    max_depth: u32,
+    mut rx:        broadcast::Receiver<Event>,
+    bcast:         broadcast::Sender<Event>,
+    bus:           apexos_core::BusHandle,
+    tool_reg:      Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>>,
+    histories:     Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
+    engine:        Arc<TurnEngine>,
+    max_depth:     u32,
+    session_store: Arc<SessionStore>,
 ) {
     // Per-session abort handles and parent-child tree for cascade cancellation.
     let abort_handles    = Arc::new(Mutex::new(HashMap::<SessionId, AbortHandle>::new()));
@@ -687,19 +697,27 @@ fn spawn_agent_router(
                 Ok(Event::UserPrompt { session, text }) => {
                     session_depths.lock().await.entry(session).or_insert(0);
 
+                    let user_msg = Message::User {
+                        content: vec![ContentBlock::Text { text }],
+                    };
                     let mut hist = histories.lock().await;
                     let history  = hist.entry(session).or_default();
-                    history.push(Message::User {
-                        content: vec![ContentBlock::Text { text }],
-                    });
-                    let snapshot = history.clone();
+                    history.push(user_msg.clone());
+                    let snapshot     = history.clone();
+                    let snapshot_len = snapshot.len();
                     drop(hist);
+
+                    // Persist user message immediately.
+                    {
+                        let store = Arc::clone(&session_store);
+                        tokio::spawn(async move { store.append(session, &user_msg).await; });
+                    }
 
                     let tools  = gather_tools(&tool_reg).await;
                     let handle = tokio::spawn(root_turn(
                         session, snapshot,
                         bus.clone(), bcast.clone(), tools, engine.clone(),
-                        histories.clone(),
+                        histories.clone(), Arc::clone(&session_store), snapshot_len,
                     ));
                     abort_handles.lock().await.insert(session, handle.abort_handle());
                 }
@@ -769,16 +787,28 @@ fn spawn_agent_router(
 // ── turn task helpers ─────────────────────────────────────────────────────────
 
 async fn root_turn(
-    session:   SessionId,
-    history:   Vec<Message>,
-    bus:       apexos_core::BusHandle,
-    bcast:     broadcast::Sender<Event>,
-    tools:     Vec<ToolSpec>,
-    engine:    Arc<TurnEngine>,
-    histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
+    session:       SessionId,
+    history:       Vec<Message>,
+    bus:           apexos_core::BusHandle,
+    bcast:         broadcast::Sender<Event>,
+    tools:         Vec<ToolSpec>,
+    engine:        Arc<TurnEngine>,
+    histories:     Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
+    session_store: Arc<SessionStore>,
+    snapshot_len:  usize,
 ) {
     match run_turn(session, history, bus.clone(), bcast, tools, engine).await {
-        Ok(updated) => { histories.lock().await.insert(session, updated); }
+        Ok(updated) => {
+            // Persist the assistant messages added during this turn.
+            if updated.len() > snapshot_len {
+                let delta: Vec<Message> = updated[snapshot_len..].to_vec();
+                let store = session_store.clone();
+                tokio::spawn(async move {
+                    for msg in &delta { store.append(session, msg).await; }
+                });
+            }
+            histories.lock().await.insert(session, updated);
+        }
         Err(e) => {
             eprintln!("[agent:{:?}] turn error: {e}", session);
             // Always unblock the frontend — emit error then TurnComplete.
