@@ -102,11 +102,11 @@ No "almost done" — item is checked when tested and committed.
 
 **Root cause of current disconnect:** JS localStorage assigns session IDs independently per browser tab/client. No server-side session state — histories are in-memory only, wiped on restart.
 
-### 5a — Server-side session persistence
-- [ ] `store/session_store.rs` — append-only JSONL per session under `$AGENTD_LOG/sessions/{session_id}.jsonl`; `sessions/index.jsonl` for metadata (created_at, last_active, message_count)
-- [ ] Append User + Assistant messages immediately on bus events (hook into agent router or event log writer)
-- [ ] On daemon startup: scan sessions dir, load recent N sessions into `histories` HashMap (restore conversation history across restarts)
-- [ ] `/api/sessions` gateway endpoint — returns [{session_id, created_at, last_active, preview}]
+### 5a — Server-side session persistence ✓
+- [x] `agentd/src/session_store.rs` — append-only JSONL per session under `$AGENTD_LOG/sessions/{session_id}.jsonl`; mtime used for last_active
+- [x] User message persisted immediately on UserPrompt; assistant delta persisted after each root_turn (updated[snapshot_len..])
+- [x] On daemon startup: scan sessions dir, load all sessions into `histories` HashMap (restores conversation across restarts); verified on Pi
+- [x] `/api/sessions` gateway endpoint — returns [{session_id, last_active, message_count, preview}] sorted newest-first; verified live
 
 ### 5b — Server-side session ID issuance + WS handshake
 - [ ] WS connect handshake: client sends `{"type":"hello","resume_session":"sid_xxx"}` (or omits for new session); server responds `{"type":"session_init","session_id":"sid_xxx","history":[...]}`
