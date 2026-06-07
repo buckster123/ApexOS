@@ -819,6 +819,11 @@ fn spawn_agent_router(
                                 "[sensor alert] {node_id}/{sensor_id} motion detected"
                             ))
                         }
+                        SensorReading::AirQuality { iaq, accuracy, sensor_id, .. } if *iaq > 150.0 && *accuracy >= 2 => {
+                            Some(format!(
+                                "[sensor alert] {node_id}/{sensor_id} air quality degraded: IAQ {iaq:.0} (accuracy {accuracy}/3) — consider ventilating"
+                            ))
+                        }
                         _ => None,
                     };
                     if let Some(prompt) = alert {

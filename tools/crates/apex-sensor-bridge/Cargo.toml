@@ -8,6 +8,7 @@ name = "apex-sensor-bridge"
 path = "src/main.rs"
 
 [dependencies]
-serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
 tungstenite = "0.26"
+reqwest     = { version = "0.12", features = ["blocking"] }

@@ -85,6 +85,24 @@ pub enum SensorReading {
     Motion      { detected: bool, sensor_id: String },
     Distance    { cm: f32,      sensor_id: String },
     GpioLevel   { pin: u8, high: bool },
+    /// BME688 BSEC2 air quality bundle (IAQ, CO₂ eq, VOC eq + T/RH/P)
+    AirQuality {
+        iaq:          f32,
+        co2_eq_ppm:   f32,
+        voc_ppm:      f32,
+        accuracy:     u8,
+        temperature_c: f32,
+        humidity_pct:  f32,
+        pressure_hpa:  f32,
+        sensor_id:    String,
+    },
+    /// MLX90640 32×24 thermal frame summary (no raw array — keep events small)
+    ThermalFrame {
+        min_c:      f32,
+        max_c:      f32,
+        mean_c:     f32,
+        sensor_id:  String,
+    },
 }
 
 // ── The central event enum ──────────────────────────────────────────────────
