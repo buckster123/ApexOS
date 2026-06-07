@@ -306,16 +306,16 @@ thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
 - [x] Smoke test: `[sensor-bridge] node connected` + `ApexOS: Temperature { celsius: 35.3, sensor_id: "cpu_thermal" }` in agentd logs
 - [x] Both services running: `systemctl status agentd apex-sensor-bridge` both active
 - [x] Commit + push: `add SensorEvent bus + /sensor-bridge gateway + apex-sensor-bridge daemon`
-- [ ] **Real sensors (Phase 6d next)**: sensor Pi has BME688 @ 0x77, MLX90640 @ 0x33, IMX500 (CAM0), IMX708 NoIR (CAM1)
-      Two paths forward (pick one next session):
-      A. Install SensorHead (buckster123/SensorHead) on USB disk, HTTP-poll localhost:8080 from bridge
-         - Gains: BSEC2 IAQ/CO2eq, full camera vision, thermal heatmaps, on-chip inference
-         - Needs: numpy, pillow, bme68x BSEC2 egg, libcamera/picamera2 install on USB disk
-      B. rppal direct I2C in apex-sensor-bridge (pure Rust, no Python)
-         - BME688 raw T/H/P/gas via I2C 0x77; MLX90640 32×24 thermal via I2C 0x33
-         - Loses IAQ/CO2eq (BSEC2 closed-source); gains: no external deps, runs as agentd user
-      NOTE: NVMe has the full SensorHead install (/home/hailo/...) but bind-mount approach is fragile.
-      The right move is a clean install on the USB disk or going the Rust rppal route.
+- [x] **Real sensors (Phase 6d complete)**: SensorHead installed on USB disk (~/SensorHead), BSEC2 egg copied from NVMe, all sensors live
+      - BME688: BSEC2 v2.6.1.0, T/RH/P + IAQ/CO₂eq/VOC flowing as AirQuality events
+      - MLX90640: thermal frame (min/max/mean) flowing as ThermalFrame events every 30s
+      - i2c-dev modprobe on boot (/etc/modules), i2c-arm=on + 400kHz in config.txt
+      - bme68x BSEC2 egg + lgpio .so symlinked into SensorHead venv
+      - sensorhead-dashboard.service runs as apexos, BLINKA_LGPIO=1, data at ~/SensorHead/data
+      - Agent router: IAQ > 150 with accuracy >= 2 fires autonomous alert turn
+      - All three services running: agentd + sensorhead-dashboard + apex-sensor-bridge
+      Smoke test: `AirQuality { iaq: 50.0, temperature_c: 21.18, humidity_pct: 61.62 }` + `ThermalFrame { min_c: 25.2, max_c: 33.8 }` in agentd logs
+- [ ] Register sensor-mcp as MCP plugin in plugins.toml (pull-mode: agent queries sensors on demand)
 - [ ] Add GPIO level reads (digital sensors) — rppal InputPin, configurable pin list via env
 - [ ] `apex-gpio` MCP tool for manual GPIO reads — deferred to Phase 7
 
@@ -347,6 +347,11 @@ thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
 - **disk_usage**: Using `df -B1` subprocess (one per mount entry) avoids direct `statvfs` FFI; slower but simpler and portable.
 - **reqwest blocking feature**: must be declared explicitly (`reqwest = { features = ["blocking"] }`); tokio runtime not needed.
 - **`plugins.pi.toml`**: Pi production config; deployed to `/etc/agentd/plugins.toml` by hand. Dev config (`plugins.toml`) uses local paths for cerebro.
+- **SensorHead on Pi 5 Debian trixie**: `i2c-dev` module not auto-loaded; must `modprobe i2c-dev` + add to `/etc/modules`. `dtparam=i2c_arm=on` + `dtparam=i2c_arm_baudrate=400000` in `/boot/firmware/config.txt`. Reboot required.
+- **SensorHead venv lgpio**: Pi 5 uses `lgpio` but it won't compile from pip. Fix: symlink system `lgpio.py` + `_lgpio.cpython-313-aarch64-linux-gnu.so` from `/usr/lib/python3/dist-packages/` into the venv. Set `BLINKA_LGPIO=1` env var.
+- **SensorHead bme68x egg**: copy egg from NVMe `hailo` install OR from any previous SensorHead venv. Add `bme68x.pth` pointing to the egg in venv site-packages. BSEC2 state lives at `SENSORHEAD_DATA_DIR` (default now env-overridable in local config.py patch).
+- **sensorhead-dashboard PYTHONPATH**: needs `SensorHead/` dir (for sensor_head package) + bme68x egg path (since pip install -e fails with setuptools flat-layout discovery on pics/data dirs).
+- **`/var/lib/agentd/`**: mode 700, owned by `agentd` user. apexos user cannot write there. Use `~/SensorHead/data` for sensorhead state or change owner.
 - **scheduler cron format**: 6-field (second minute hour day month weekday), not standard 5-field. `"0 0 8 * * *"` = 8am daily.
 - **6d: switch Pi first** — sensor Pi has free 40-pin header (no Hailo). ApexOS USB drive boots on either Pi interchangeably.
 - **6d: gateway auth** — `/sensor-bridge` WS endpoint needs a shared secret in `/etc/agentd/env` (`SENSOR_BRIDGE_TOKEN`) so body-pi can authenticate.
