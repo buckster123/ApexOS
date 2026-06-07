@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,62 @@ pub struct PluginId(pub String);
 
 impl fmt::Display for PluginId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.0) }
+}
+
+// ── Evolution types ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EvolutionId(pub u64);
+
+/// Policy mode — lives here so EvolutionProposal (also in core) can reference
+/// it without a circular dep. plugins::policy imports this via apexos_core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolicyMode {
+    #[default]
+    Suggest,
+    AutoEdit,
+    Yolo,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Subsystem {
+    Plugins,
+    Policy,
+    Agent,
+    Gateway,
+}
+
+/// Discrete, auditable change proposals. Each variant maps to exactly one
+/// config artifact and one hot-reload action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EvolutionProposal {
+    RegisterMcpServer {
+        name:    String,
+        command: String,
+        env:     HashMap<String, String>,
+        reason:  String,
+    },
+    UnregisterMcpServer {
+        name:   String,
+        reason: String,
+    },
+    UpdatePolicyRule {
+        tool_pattern: String,
+        new_mode:     PolicyMode,
+        reason:       String,
+    },
+    /// Full replacement content for /etc/agentd/soul.md (not a diff — full
+    /// content makes rollback trivial: snapshot pre-patch, restore on demand).
+    UpdateSystemPrompt {
+        content: String,
+        reason:  String,
+    },
+    HotReloadSubsystem {
+        subsystem: Subsystem,
+    },
 }
 
 // ── The central event enum ──────────────────────────────────────────────────
@@ -52,6 +109,28 @@ pub enum Event {
 
     // ── system ────────────────────────────────────────────
     Error { session: Option<SessionId>, message: String },
+
+    // self-evolution
+    /// Agent has proposed a structural change. Routes through the policy engine
+    /// under the `evolution.*` rule namespace (default: suggest -> ask user).
+    EvolutionProposed {
+        id:          EvolutionId,
+        proposal:    EvolutionProposal,
+        proposed_by: SessionId,
+    },
+    /// An EvolutionProposed was approved and applied.
+    EvolutionApplied {
+        id:            EvolutionId,
+        proposal:      EvolutionProposal,
+        patch_summary: String,
+        applied_by:    Option<SessionId>,
+    },
+    /// A previously applied evolution was rolled back.
+    EvolutionRolledBack {
+        evolution_id:   EvolutionId,
+        reason:         String,
+        rolled_back_by: Option<SessionId>,
+    },
 }
 
 // ── Tool call / result ────────────────────────────────────────────────────

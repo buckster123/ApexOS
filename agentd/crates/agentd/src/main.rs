@@ -275,6 +275,7 @@ async fn gather_tools(
         .cloned()
         .collect();
     tools.push(agent_spawn_spec());
+    tools.push(propose_evolution_spec());
     tools
 }
 
@@ -296,6 +297,67 @@ fn agent_spawn_spec() -> ToolSpec {
                 }
             },
             "required": ["prompt"]
+        }),
+    }
+}
+
+fn propose_evolution_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "propose_evolution".into(),
+        description: "Propose a structural change to agentd: register or remove an MCP plugin, \
+                      update a policy rule, update your own system prompt (soul.md), or \
+                      hot-reload a subsystem. Every proposal is recorded as an event and \
+                      flows through the approval engine before being applied.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "register_mcp_server",
+                        "unregister_mcp_server",
+                        "update_policy_rule",
+                        "update_system_prompt",
+                        "hot_reload_subsystem"
+                    ],
+                    "description": "The type of evolution to propose."
+                },
+                "name": {
+                    "type":        "string",
+                    "description": "Plugin name (register_mcp_server / unregister_mcp_server)."
+                },
+                "command": {
+                    "type":        "string",
+                    "description": "Shell command to start the MCP server (register_mcp_server)."
+                },
+                "env": {
+                    "type":        "object",
+                    "description": "Environment variables for the MCP server (register_mcp_server)."
+                },
+                "tool_pattern": {
+                    "type":        "string",
+                    "description": "Exact tool name or wildcard 'prefix.*' (update_policy_rule)."
+                },
+                "new_mode": {
+                    "type":        "string",
+                    "enum":        ["suggest", "auto-edit", "yolo"],
+                    "description": "New approval mode (update_policy_rule)."
+                },
+                "content": {
+                    "type":        "string",
+                    "description": "Full replacement text for /etc/agentd/soul.md (update_system_prompt)."
+                },
+                "subsystem": {
+                    "type":        "string",
+                    "enum":        ["plugins", "policy", "agent", "gateway"],
+                    "description": "Subsystem to reload in-place (hot_reload_subsystem)."
+                },
+                "reason": {
+                    "type":        "string",
+                    "description": "Why this change is being proposed."
+                }
+            },
+            "required": ["kind", "reason"]
         }),
     }
 }

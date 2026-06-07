@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, mpsc};
 use tokio::process::Command;
 use std::process::Stdio;
-use apexos_core::{ActionId, BusHandle, Event, PluginId, SessionId, ToolCall, ToolOutput};
+use apexos_core::{ActionId, BusHandle, Event, EvolutionId, EvolutionProposal, PluginId, SessionId, ToolCall, ToolOutput};
 use crate::config::{PluginConfig, RestartPolicy};
 use crate::mcp::McpClient;
 use crate::policy::{Decision, PolicyEngine};
@@ -115,6 +115,53 @@ impl Supervisor {
 
     /// Dispatch a tool call immediately (policy already checked).
     fn dispatch_tool(&self, session: SessionId, call: ToolCall) {
+        // Virtual tool: propose_evolution (Phase 0 stub — emits EvolutionProposed
+        // and acks immediately; no apply logic until Phase 2).
+        if call.tool == "propose_evolution" {
+            let evolution_id = EvolutionId(call.id.0);
+            let call_id      = call.id;
+            let bus          = self.bus.clone();
+            match serde_json::from_value::<EvolutionProposal>(call.args.clone()) {
+                Ok(proposal) => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::EvolutionProposed {
+                            id: evolution_id,
+                            proposal,
+                            proposed_by: session,
+                        }).await;
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput {
+                                ok:      true,
+                                content: serde_json::json!({
+                                    "status":       "proposed",
+                                    "evolution_id": evolution_id.0,
+                                    "note":         "proposal recorded; apply logic wires in Phase 2",
+                                }),
+                            },
+                        }).await;
+                    });
+                }
+                Err(e) => {
+                    let err = e.to_string();
+                    tokio::spawn(async move {
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput {
+                                ok:      false,
+                                content: serde_json::json!(
+                                    format!("invalid evolution proposal: {err}")
+                                ),
+                            },
+                        }).await;
+                    });
+                }
+            }
+            return;
+        }
+
         // Virtual tool: agent_spawn is handled by the async router, not an MCP plugin.
         if call.tool == "agent_spawn" {
             let prompt  = call.args["prompt"].as_str().unwrap_or("").to_owned();

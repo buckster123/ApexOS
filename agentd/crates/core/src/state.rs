@@ -78,6 +78,13 @@ impl SystemState {
             Event::SpawnAgent { .. } => {}
 
             Event::Error { .. } => {}
+
+            // Evolution events are handled by the async evolution layer.
+            // SystemState tracks no extra fields for them — the event log is
+            // the authoritative audit trail.
+            Event::EvolutionProposed { .. }    => {}
+            Event::EvolutionApplied  { .. }    => {}
+            Event::EvolutionRolledBack { .. }  => {}
         }
     }
 
@@ -180,5 +187,51 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn evolution_proposed_round_trips_through_json() {
+        let ev = Event::EvolutionProposed {
+            id:          EvolutionId(1),
+            proposal:    EvolutionProposal::UpdateSystemPrompt {
+                content: "you are apex".into(),
+                reason:  "initial soul".into(),
+            },
+            proposed_by: SessionId(42),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let ev2: Event = serde_json::from_str(&json).unwrap();
+        match ev2 {
+            Event::EvolutionProposed { id, proposed_by, .. } => {
+                assert_eq!(id, EvolutionId(1));
+                assert_eq!(proposed_by, SessionId(42));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn evolution_proposal_json_has_kind_tag() {
+        let p = EvolutionProposal::RegisterMcpServer {
+            name:    "vision".into(),
+            command: "/usr/local/bin/vision-mcp".into(),
+            env:     std::collections::HashMap::new(),
+            reason:  "add image capture".into(),
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["kind"], "register_mcp_server");
+        assert_eq!(json["name"], "vision");
+    }
+
+    #[test]
+    fn policy_mode_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_value(PolicyMode::AutoEdit).unwrap(),
+            serde_json::json!("auto-edit"),
+        );
+        assert_eq!(
+            serde_json::to_value(PolicyMode::Suggest).unwrap(),
+            serde_json::json!("suggest"),
+        );
     }
 }

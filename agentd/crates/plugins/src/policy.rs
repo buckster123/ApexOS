@@ -1,21 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 use serde::Deserialize;
-
 // ── config types (loaded from policy.toml) ────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum Mode {
-    /// Every tool call requires explicit approval.
-    #[default]
-    Suggest,
-    /// Reads and edits inside the workspace auto-approve; mutations outside or
-    /// command execution ask. Mirrors Claude Code `acceptEdits`.
-    AutoEdit,
-    /// Nothing asks — full-send. Mirrors `bypassPermissions`.
-    Yolo,
-}
+// PolicyMode lives in apexos_core so EvolutionProposal can reference it
+// without a circular dep. Re-exported here for call-site convenience.
+pub use apexos_core::PolicyMode;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -50,7 +40,7 @@ fn default_inherit_mode()   -> bool { true }
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PolicyConfig {
     #[serde(default)]
-    pub mode: Mode,
+    pub mode: PolicyMode,
     #[serde(default)]
     pub rules: HashMap<String, Rule>,
     #[serde(default)]
@@ -79,7 +69,7 @@ impl PolicyEngine {
     /// Evaluate whether `tool_name` may proceed without user confirmation.
     /// Returns `Decision::Allow` or `Decision::Ask`.
     pub fn check(&self, tool_name: &str) -> Decision {
-        if self.config.mode == Mode::Yolo {
+        if self.config.mode == PolicyMode::Yolo {
             return Decision::Allow;
         }
         let rule = self.find_rule(tool_name);
@@ -105,7 +95,7 @@ impl PolicyEngine {
             Some(Rule::Allow)     => Decision::Allow,
             Some(Rule::Ask)       => Decision::Ask,
             Some(Rule::Workspace) => match self.config.mode {
-                Mode::AutoEdit => Decision::Allow, // path check deferred
+                PolicyMode::AutoEdit => Decision::Allow, // path check deferred
                 _              => Decision::Ask,
             },
         }
@@ -130,7 +120,7 @@ fn matches_wildcard(pattern: &str, tool: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn engine(mode: Mode, rules: &[(&str, Rule)]) -> PolicyEngine {
+    fn engine(mode: PolicyMode, rules: &[(&str, Rule)]) -> PolicyEngine {
         PolicyEngine::new(PolicyConfig {
             mode,
             rules: rules.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
@@ -140,32 +130,32 @@ mod tests {
 
     #[test]
     fn yolo_allows_everything() {
-        let e = engine(Mode::Yolo, &[("shell.exec", Rule::Ask)]);
+        let e = engine(PolicyMode::Yolo, &[("shell.exec", Rule::Ask)]);
         assert_eq!(e.check("shell.exec"), Decision::Allow);
         assert_eq!(e.check("anything"),   Decision::Allow);
     }
 
     #[test]
     fn suggest_allow_rule_passes() {
-        let e = engine(Mode::Suggest, &[("fs.read", Rule::Allow)]);
+        let e = engine(PolicyMode::Suggest, &[("fs.read", Rule::Allow)]);
         assert_eq!(e.check("fs.read"), Decision::Allow);
     }
 
     #[test]
     fn suggest_ask_rule_blocks() {
-        let e = engine(Mode::Suggest, &[("shell.exec", Rule::Ask)]);
+        let e = engine(PolicyMode::Suggest, &[("shell.exec", Rule::Ask)]);
         assert_eq!(e.check("shell.exec"), Decision::Ask);
     }
 
     #[test]
     fn suggest_unknown_tool_blocks() {
-        let e = engine(Mode::Suggest, &[]);
+        let e = engine(PolicyMode::Suggest, &[]);
         assert_eq!(e.check("unknown.tool"), Decision::Ask);
     }
 
     #[test]
     fn wildcard_matches_prefixed_tools() {
-        let e = engine(Mode::Suggest, &[("cerebro.*", Rule::Allow)]);
+        let e = engine(PolicyMode::Suggest, &[("cerebro.*", Rule::Allow)]);
         assert_eq!(e.check("cerebro.recall"), Decision::Allow);
         assert_eq!(e.check("cerebro.store"),  Decision::Allow);
         assert_eq!(e.check("cerebro"),        Decision::Ask);  // bare name, no dot
@@ -174,7 +164,7 @@ mod tests {
 
     #[test]
     fn exact_match_wins_over_wildcard() {
-        let e = engine(Mode::Suggest, &[
+        let e = engine(PolicyMode::Suggest, &[
             ("cerebro.*",    Rule::Allow),
             ("cerebro.exec", Rule::Ask),
         ]);
@@ -184,20 +174,20 @@ mod tests {
 
     #[test]
     fn auto_edit_workspace_rule_allows() {
-        let e = engine(Mode::AutoEdit, &[("fs.write", Rule::Workspace)]);
+        let e = engine(PolicyMode::AutoEdit, &[("fs.write", Rule::Workspace)]);
         assert_eq!(e.check("fs.write"), Decision::Allow);
     }
 
     #[test]
     fn suggest_workspace_rule_blocks() {
-        let e = engine(Mode::Suggest, &[("fs.write", Rule::Workspace)]);
+        let e = engine(PolicyMode::Suggest, &[("fs.write", Rule::Workspace)]);
         assert_eq!(e.check("fs.write"), Decision::Ask);
     }
 
     #[test]
     fn loads_default_policy_config() {
         let cfg = PolicyConfig::default();
-        assert_eq!(cfg.mode, Mode::Suggest);
+        assert_eq!(cfg.mode, PolicyMode::Suggest);
         assert!(cfg.rules.is_empty());
     }
 
@@ -218,7 +208,7 @@ max_concurrent  = 8
 inherit_mode    = false
 "#;
         let cfg: PolicyConfig = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.mode, Mode::AutoEdit);
+        assert_eq!(cfg.mode, PolicyMode::AutoEdit);
         assert_eq!(cfg.rules["fs.read"],    Rule::Allow);
         assert_eq!(cfg.rules["shell.exec"], Rule::Ask);
         assert_eq!(cfg.rules["cerebro.*"],  Rule::Allow);
