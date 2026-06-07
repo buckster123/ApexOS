@@ -57,7 +57,7 @@ Everything else: allowed, subject to policy (`ask` by default).
 
 ---
 
-## Phase 6a — `apexos-tools` Rust MCP server ✗
+## Phase 6a — `apexos-tools` Rust MCP server ✓
 
 **Goal:** shell execution + filesystem + HTTP fetch + Pi system stats in one binary.
 
@@ -113,28 +113,28 @@ restart = "always"
 
 ### Checklist
 
-- [ ] Create `tools/` workspace alongside `agentd/` (separate Cargo workspace — keeps build times independent)
-- [ ] `tools/crates/apexos-tools/` — binary crate, `Cargo.toml` with `serde_json`, `reqwest` (blocking)
-- [ ] Implement MCP stdio loop: read line → parse JSON-RPC → dispatch → write response
-- [ ] `tools/list` handler — enumerate all tools with JSON Schema for each parameter
-- [ ] `run_command` — `std::process::Command` with timeout thread; denylist check first
-- [ ] `read_file` — `fs::read_to_string` with optional byte cap
-- [ ] `write_file` — `fs::write` / `OpenOptions::append`
-- [ ] `list_dir` — `fs::read_dir` with optional recursion (depth-limited, max 3 levels)
-- [ ] `create_dir` — `fs::create_dir_all`
-- [ ] `delete_path` — `fs::remove_file` or `fs::remove_dir_all` (denylist check first)
-- [ ] `http_fetch` — blocking reqwest, 30s timeout, body size cap 4MB
-- [ ] `cpu_temp` — read `/sys/class/thermal/thermal_zone*/temp` (divide by 1000)
-- [ ] `disk_usage` — parse `/proc/mounts` + `statvfs` syscall
-- [ ] `memory_info` — parse `/proc/meminfo`
-- [ ] `uptime` — parse `/proc/uptime` + `/proc/loadavg`
-- [ ] Build on Pi: `cd ~/ApexOS/tools && cargo build --release`
-- [ ] Copy binary: `sudo cp target/release/apexos-tools /usr/local/bin/`
-- [ ] Register in `plugins.toml` + policy rules in `policy.toml`
+- [x] Create `tools/` workspace alongside `agentd/` (separate Cargo workspace — keeps build times independent)
+- [x] `tools/crates/apexos-tools/` — binary crate, `Cargo.toml` with `serde_json`, `reqwest` (blocking)
+- [x] Implement MCP stdio loop: read line → parse JSON-RPC → dispatch → write response
+- [x] `tools/list` handler — enumerate all tools with JSON Schema for each parameter
+- [x] `run_command` — `std::process::Command` with timeout via mpsc channel; denylist check first
+- [x] `read_file` — `fs::File::read` with optional byte cap
+- [x] `write_file` — `OpenOptions` with append support; creates parent dirs
+- [x] `list_dir` — `fs::read_dir` with optional recursion (depth-limited, max 3 levels)
+- [x] `create_dir` — `fs::create_dir_all`
+- [x] `delete_path` — `fs::remove_file` or `fs::remove_dir_all` (denylist + protected-path check)
+- [x] `http_fetch` — blocking reqwest, 30s timeout, body size cap 4MB
+- [x] `cpu_temp` — read `/sys/class/thermal/thermal_zone*/temp` (divide by 1000), all zones reported
+- [x] `disk_usage` — `/proc/mounts` + `df -B1` per mount; filters pseudo-fs
+- [x] `memory_info` — parse `/proc/meminfo`
+- [x] `uptime` — parse `/proc/uptime` + `/proc/loadavg`
+- [x] Build on Pi: `cd ~/ApexOS/tools && ~/.cargo/bin/cargo build --release` (1m 12s)
+- [x] Copy binary: `sudo cp target/release/apexos-tools /usr/local/bin/`
+- [x] Register in `plugins.pi.toml` + policy rules in `policy.toml`; deployed to `/etc/agentd/`
 - [ ] Smoke test: ask agent to run `uname -a`, read `/etc/os-release`, fetch `https://httpbin.org/get`
 - [ ] Smoke test: ask agent to report its own CPU temp and disk usage
 - [ ] Verify denylist: `rm -rf /` attempt returns error (not executed)
-- [ ] Commit: `feat(tools): apexos-tools MCP server — shell, fs, http, sysstat`
+- [x] Commit: `feat(tools): apexos-tools MCP server — shell, fs, http, sysstat`
 
 ---
 
@@ -305,4 +305,7 @@ When a dedicated sensor Pi is assembled (not the ApexOS Hailo Pi):
 
 ## Notes accumulated across sessions
 
-_(add discoveries here as work progresses)_
+- **run_command timeout**: `JoinHandle::join_timeout` is not stable Rust — use `mpsc::channel` + `recv_timeout` instead.
+- **disk_usage**: Using `df -B1` subprocess (one per mount entry) avoids direct `statvfs` FFI; slower but simpler and portable.
+- **reqwest blocking feature**: must be declared explicitly (`reqwest = { features = ["blocking"] }`); tokio runtime not needed.
+- **`plugins.pi.toml`**: Pi production config; deployed to `/etc/agentd/plugins.toml` by hand. Dev config (`plugins.toml`) uses local paths for cerebro.
