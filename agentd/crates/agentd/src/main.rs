@@ -585,9 +585,14 @@ async fn root_turn(
     engine:    Arc<TurnEngine>,
     histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
 ) {
-    match run_turn(session, history, bus, bcast, tools, engine).await {
+    match run_turn(session, history, bus.clone(), bcast, tools, engine).await {
         Ok(updated) => { histories.lock().await.insert(session, updated); }
-        Err(e)      => eprintln!("[agent:{:?}] turn error: {e}", session),
+        Err(e) => {
+            eprintln!("[agent:{:?}] turn error: {e}", session);
+            // Always unblock the frontend — emit error then TurnComplete.
+            bus.emit(Event::Error { session: Some(session), message: e.to_string() }).await;
+            bus.emit(Event::TurnComplete { session }).await;
+        }
     }
 }
 

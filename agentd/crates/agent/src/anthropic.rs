@@ -110,9 +110,16 @@ fn block_to_json(b: &ContentBlock) -> Value {
             serde_json::json!({ "type": "thinking", "thinking": thinking, "signature": signature }),
         ContentBlock::ToolUse { id, name, input } =>
             serde_json::json!({ "type": "tool_use", "id": id, "name": name, "input": input }),
-        ContentBlock::ToolResult { tool_use_id, content, is_error } =>
+        ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+            // Anthropic requires content to be a string or list of content blocks,
+            // not a raw JSON object/number/etc. Coerce anything non-string here.
+            let safe_content = match content {
+                serde_json::Value::String(_) => content.clone(),
+                other => serde_json::Value::String(other.to_string()),
+            };
             serde_json::json!({ "type": "tool_result", "tool_use_id": tool_use_id,
-                                "content": content, "is_error": is_error }),
+                                "content": safe_content, "is_error": is_error })
+        }
     }
 }
 
