@@ -85,7 +85,17 @@ so gateway stays decoupled from the policy crate.
 
 ---
 
-## Phase B — System tools (next)
+## Phase B — System tools (in progress)
+
+**Done this session:**
+- [x] Win7-style start menu (drop-up, two-pane: apps left / settings+power right)
+- [x] Dynamic taskbar — running apps as labeled tabs, appear on openWin, removed on close
+- [x] Minimize-to-taskbar — WinBox `.minimize` hidden via CSS, tab dims to italic, click restores
+- [x] `POST /api/run` gateway endpoint — `sh -c`, 30s timeout, minimal denylist
+- [x] `!cmd` passthrough in CLI + desktop — green `$` turn, stdout/stderr inline
+- [x] Terminal window — xterm.js 4.19.0 + FitAddon bundled; cwd tracking; Ctrl+L
+
+**Remaining Phase B:**
 
 **CLI `!` passthrough + slash commands**
 - `!cmd` prefix in CLI input → intercepted client-side → `/api/run` POST → streams stdout back into chat output

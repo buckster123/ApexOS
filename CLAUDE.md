@@ -21,7 +21,7 @@ agentd/           Cargo workspace (binary + 5 library crates)
 docs/reference/   Reference Rust snippets from the handoff package (read-only)
 docs/claude/      Lazy-loaded sub-MDs (see ## Docs below)
 plans/            Architecture docs and handoff package
-ui/               Frontend — CLI skin (index.html/style.css/app.js) + Desktop skin (desktop.html/desktop-style.css/desktop-app.js) + lib/ (WinBox+Alpine, no CDN)
+ui/               Frontend — CLI skin (index.html/style.css/app.js) + Desktop skin (desktop.html/desktop-style.css/desktop-app.js) + lib/ (WinBox+Alpine+xterm.js, no CDN)
 tools/            Separate Cargo workspace for MCP plugins
   crates/
     apexos-tools/ Shell + fs + http + sysstat MCP server (deployed to /usr/local/bin/)
@@ -46,6 +46,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~16.~~ ✓ Agent bodies Phase 6c — `notify` tool in `apexos-tools`; surfaces: JSONL log (always) + notify-send toast + espeak-ng TTS + ntfy.sh (env-gated) + Telegram (env-gated); agentd added to audio group; espeak-ng installed; smoke: 3/3 local surfaces fired clean
 ~~17.~~ ✓ Agent bodies Phase 6d — `SensorReading` enum + `Event::SensorReading` in core; `/sensor-bridge` WS endpoint; `apex-sensor-bridge` HTTP-polls SensorHead (BME688 BSEC2 + MLX90640 thermal); `AirQuality` + `ThermalFrame` variants; `sensorhead-dashboard.service`; IAQ > 150 alert routing; smoke: IAQ/T/RH/P + thermal frame flowing live in agentd every 30s; `sensor-head-mcp` proxy plugin (8 pull-mode tools); `plugin 'sensor-head' up — 8 tools` confirmed
 ~~18.~~ ✓ Desktop skin Phase A — WinBox 0.2.82 + Alpine.js windowed OS shell; `desktop.html` + `desktop-app.js` + `desktop-style.css`; `ui/lib/` bundled (no CDN); topbar with live model+policy selectors, clock; dock with 5 app buttons; agent/sensors/cerebro/sensorhead/settings windows; lazy iframe loading for Cerebro (8767) + SensorHead (8080); Alpine settings (soul editor, policy mode, plugin list); `/api/soul` GET+POST + `/api/policy` POST in gateway; `cerebro-api.service` at boot (port 8767)
+~~19.~~ ✓ Desktop skin Phase B (partial) — Win7-style start menu + dynamic taskbar (start btn → drop-up app list, running apps as labeled tabs, minimize-to-taskbar, WinBox `.minimize` hidden via CSS); `!cmd` shell passthrough in CLI + desktop (bypasses agent, `/api/run`, stdout inline); terminal window (xterm.js 4.19.0 + FitAddon in `ui/lib/`; cwd tracking; Ctrl+L); `POST /api/run` gateway endpoint (30s timeout, denylist); `plans/sonus-plugin.md` written
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
