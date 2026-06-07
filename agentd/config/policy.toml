@@ -22,7 +22,7 @@ mode = "suggest"
 "cerebro.*"   = "allow"        # memory ops are safe
 "net.*"       = "ask"
 "agent.spawn"       = "ask"    # gate sub-agent fan-out / depth
-"propose_evolution" = "allow"  # proposing is safe; apply step gates on approval (Phase 2)
+"propose_evolution" = "ask"    # structural changes require explicit user approval before apply
 
 # Optional knobs for the multi-agent layer (wire in §8):
 [subagents]

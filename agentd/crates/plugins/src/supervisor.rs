@@ -1,5 +1,5 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::process::Command;
 use std::process::Stdio;
 use apexos_core::{ActionId, BusHandle, Event, EvolutionId, EvolutionProposal, PluginId, SessionId, ToolCall, ToolOutput};
@@ -16,8 +16,15 @@ struct PendingApproval {
     call:    ToolCall,
 }
 
-enum SupervisorCmd {
-    PluginDied { id: PluginId },
+pub enum SupervisorCmd {
+    /// Internal: process watcher detected the child exited.
+    PluginDied  { id: PluginId },
+    /// Start a brand-new plugin (appended to plugins.toml by evolution applier).
+    SpawnPlugin { config: PluginConfig },
+    /// Kill a plugin and remove it from the registry; does NOT restart.
+    KillPlugin  { id: PluginId },
+    /// Kill a plugin and restart it (in-place upgrade / config change).
+    HotReload   { id: PluginId },
 }
 
 pub struct Supervisor {
@@ -25,12 +32,16 @@ pub struct Supervisor {
     plugins:           HashMap<PluginId, Plugin>,
     tool_registry:     HashMap<String, PluginId>,
     configs:           HashMap<PluginId, PluginConfig>,
-    policy:            PolicyEngine,
+    /// Shared with the evolution applier; writing here updates policy live.
+    policy:            Arc<RwLock<PolicyEngine>>,
     pending_approvals: HashMap<ActionId, PendingApproval>,
+    sv_tx:             mpsc::Sender<SupervisorCmd>,
+    sv_rx:             Option<mpsc::Receiver<SupervisorCmd>>,
 }
 
 impl Supervisor {
-    pub fn new(bus: BusHandle, policy: PolicyEngine) -> Self {
+    pub fn new(bus: BusHandle, policy: Arc<RwLock<PolicyEngine>>) -> Self {
+        let (sv_tx, sv_rx) = mpsc::channel::<SupervisorCmd>(64);
         Self {
             bus,
             plugins:           HashMap::new(),
@@ -38,7 +49,14 @@ impl Supervisor {
             configs:           HashMap::new(),
             policy,
             pending_approvals: HashMap::new(),
+            sv_tx,
+            sv_rx: Some(sv_rx),
         }
+    }
+
+    /// Returns a sender that main.rs can use to send hot-reload commands.
+    pub fn cmd_tx(&self) -> mpsc::Sender<SupervisorCmd> {
+        self.sv_tx.clone()
     }
 
     /// Boot all plugins from config then run the dispatch/supervision loop.
@@ -47,10 +65,11 @@ impl Supervisor {
         plugin_configs: Vec<PluginConfig>,
         mut bus_rx: broadcast::Receiver<Event>,
     ) {
-        let (sv_tx, mut sv_rx) = mpsc::channel::<SupervisorCmd>(64);
+        let mut sv_rx = self.sv_rx.take().expect("run() called twice");
 
         for cfg in plugin_configs {
-            if let Err(e) = self.spawn_plugin(&cfg, sv_tx.clone()).await {
+            let tx = self.sv_tx.clone();
+            if let Err(e) = self.spawn_plugin(&cfg, tx).await {
                 eprintln!("[supervisor] failed to start plugin '{}': {e}", cfg.id);
             }
         }
@@ -59,7 +78,8 @@ impl Supervisor {
             tokio::select! {
                 result = bus_rx.recv() => match result {
                     Ok(Event::ToolRequested { session, call }) => {
-                        match self.policy.check(&call.tool) {
+                        let decision = self.policy.read().await.check(&call.tool);
+                        match decision {
                             Decision::Allow => {
                                 self.dispatch_tool(session, call);
                             }
@@ -104,9 +124,50 @@ impl Supervisor {
                     Err(_) => break,
                 },
 
-                Some(cmd) = sv_rx.recv() => match cmd {
-                    SupervisorCmd::PluginDied { id } => {
-                        self.handle_died(id, sv_tx.clone()).await;
+                Some(cmd) = sv_rx.recv() => {
+                    let tx = self.sv_tx.clone();
+                    match cmd {
+                        SupervisorCmd::PluginDied { id } => {
+                            self.handle_died(id, tx).await;
+                        }
+                        SupervisorCmd::SpawnPlugin { config } => {
+                            if let Err(e) = self.spawn_plugin(&config, tx).await {
+                                eprintln!("[supervisor] spawn failed for '{}': {e}", config.id);
+                            }
+                        }
+                        SupervisorCmd::KillPlugin { id } => {
+                            // Remove config first so handle_died (from dying process) won't restart.
+                            self.configs.remove(&id);
+                            self.tool_registry.retain(|_, owner| owner != &id);
+                            let had_plugin = self.plugins.remove(&id).is_some();
+                            if had_plugin {
+                                self.bus.emit(Event::PluginDown {
+                                    plugin: id,
+                                    reason: "killed by evolution".into(),
+                                }).await;
+                            }
+                        }
+                        SupervisorCmd::HotReload { id } => {
+                            // Kill the live instance (keep config so handle_died restarts it).
+                            self.tool_registry.retain(|_, owner| owner != &id);
+                            let had_plugin = self.plugins.remove(&id).is_some();
+                            if had_plugin {
+                                self.bus.emit(Event::PluginDown {
+                                    plugin: id.clone(),
+                                    reason: "hot-reload".into(),
+                                }).await;
+                            }
+                            // For non-Always policies: the process won't self-restart, so force it.
+                            if let Some(cfg) = self.configs.get(&id).cloned() {
+                                if cfg.restart != RestartPolicy::Always {
+                                    tokio::time::sleep(Duration::from_millis(300)).await;
+                                    if let Err(e) = self.spawn_plugin(&cfg, tx).await {
+                                        eprintln!("[supervisor] hot-reload '{}' failed: {e}", id.0);
+                                    }
+                                }
+                                // else: child exits → PluginDied fires → handle_died restarts
+                            }
+                        }
                     }
                 },
             }
@@ -116,7 +177,7 @@ impl Supervisor {
     /// Dispatch a tool call immediately (policy already checked).
     fn dispatch_tool(&self, session: SessionId, call: ToolCall) {
         // Virtual tool: propose_evolution (Phase 0 stub — emits EvolutionProposed
-        // and acks immediately; no apply logic until Phase 2).
+        // and acks immediately; apply logic handled by evolution applier in main.rs).
         if call.tool == "propose_evolution" {
             let evolution_id = EvolutionId(call.id.0);
             let call_id      = call.id;
@@ -137,7 +198,7 @@ impl Supervisor {
                                 content: serde_json::json!({
                                     "status":       "proposed",
                                     "evolution_id": evolution_id.0,
-                                    "note":         "proposal recorded; apply logic wires in Phase 2",
+                                    "note":         "proposal queued for apply",
                                 }),
                             },
                         }).await;
@@ -145,6 +206,7 @@ impl Supervisor {
                 }
                 Err(e) => {
                     let err = e.to_string();
+                    let bus = self.bus.clone();
                     tokio::spawn(async move {
                         bus.emit(Event::ToolResult {
                             session,
@@ -267,13 +329,17 @@ impl Supervisor {
 
     async fn handle_died(&mut self, id: PluginId, sv_tx: mpsc::Sender<SupervisorCmd>) {
         self.tool_registry.retain(|_, owner| owner != &id);
-        self.plugins.remove(&id);
+        // Only emit PluginDown if the plugin was still in our live set.
+        // HotReload removes it first, so this avoids a duplicate PluginDown event.
+        let was_live = self.plugins.remove(&id).is_some();
 
-        eprintln!("[supervisor] plugin '{}' died", id.0);
-        self.bus.emit(Event::PluginDown {
-            plugin: id.clone(),
-            reason: "process exited".into(),
-        }).await;
+        if was_live {
+            eprintln!("[supervisor] plugin '{}' died", id.0);
+            self.bus.emit(Event::PluginDown {
+                plugin: id.clone(),
+                reason: "process exited".into(),
+            }).await;
+        }
 
         let cfg = match self.configs.get(&id) {
             Some(c) => c.clone(),

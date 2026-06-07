@@ -14,6 +14,7 @@ dependencies = [
  "apexos-store",
  "serde_json",
  "tokio",
+ "toml_edit",
 ]
 
 [[package]]

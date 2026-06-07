@@ -1,30 +1,42 @@
 use apexos_core::{
-    ActionId, Bus, ContentBlock, Event, Message, PluginId,
-    SessionId, SystemState, ToolOutput, ToolSpec,
+    ActionId, Bus, ContentBlock, Event, EvolutionId, EvolutionProposal, Message,
+    PluginId, PolicyMode, SessionId, Subsystem, SystemState, ToolOutput, ToolSpec,
 };
 use apexos_gateway::{serve, GatewayState};
-use apexos_plugins::{load as load_plugins, PolicyConfig, PolicyEngine, Supervisor};
+use apexos_plugins::{
+    load as load_plugins, PluginConfig, PolicyConfig, PolicyEngine, RestartPolicy,
+    Supervisor, SupervisorCmd,
+};
 use apexos_agent::{AnthropicProvider, TurnEngine, run_turn};
 use apexos_store::run_log_writer;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::AbortHandle;
 
-fn load_soul() -> String {
+fn load_soul() -> (PathBuf, String) {
     let path = std::env::var("AGENTD_SOUL")
         .unwrap_or_else(|_| "/etc/agentd/soul.md".into());
     match std::fs::read_to_string(&path) {
-        Ok(s) if !s.trim().is_empty() => { eprintln!("[agentd] soul loaded from {path}"); s }
+        Ok(s) if !s.trim().is_empty() => {
+            eprintln!("[agentd] soul loaded from {path}");
+            (PathBuf::from(&path), s)
+        }
         _ => {
-            // Fall back to config/soul.md next to the binary (dev mode)
             let dev = std::env::var("AGENTD_SOUL_DEV")
                 .unwrap_or_else(|_| "config/soul.md".into());
             match std::fs::read_to_string(&dev) {
-                Ok(s) if !s.trim().is_empty() => { eprintln!("[agentd] soul loaded from {dev}"); s }
-                _ => { eprintln!("[agentd] soul.md not found — running without system prompt"); String::new() }
+                Ok(s) if !s.trim().is_empty() => {
+                    eprintln!("[agentd] soul loaded from {dev}");
+                    (PathBuf::from(&dev), s)
+                }
+                _ => {
+                    eprintln!("[agentd] soul.md not found — running without system prompt");
+                    // Default write path even when the file doesn't exist yet
+                    (PathBuf::from("/etc/agentd/soul.md"), String::new())
+                }
             }
         }
     }
@@ -58,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     let api_key_arc = Arc::new(RwLock::new(api_key_str));
     let model_arc   = Arc::new(RwLock::new("claude-sonnet-4-6".to_string()));
 
-    // Load policy config early so gateway can expose the mode.
+    // Load policy config and wrap in a shared Arc so the evolution applier can hot-swap it.
     let policy_path = PathBuf::from(
         std::env::var("AGENTD_POLICY_TOML")
             .unwrap_or_else(|_| "config/policy.toml".into())
@@ -68,6 +80,8 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => { eprintln!("[agentd] policy config: {e} — using defaults"); PolicyConfig::default() }
     };
     let policy_mode_str = format!("{:?}", policy_config.mode).to_uppercase();
+    let policy_arc: Arc<RwLock<PolicyEngine>> =
+        Arc::new(RwLock::new(PolicyEngine::new(policy_config)));
 
     // Gateway
     let ui_dir = PathBuf::from(
@@ -90,29 +104,48 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Plugin configs
-    let config_path = PathBuf::from(
+    let plugins_path = PathBuf::from(
         std::env::var("AGENTD_PLUGINS_TOML")
             .unwrap_or_else(|_| "config/plugins.toml".into())
     );
-    let plugin_configs = match load_plugins(&config_path) {
+    let plugin_configs = match load_plugins(&plugins_path) {
         Ok(c)  => { eprintln!("[agentd] loaded {} plugin(s)", c.len()); c }
         Err(e) => { eprintln!("[agentd] plugins config: {e}"); vec![] }
     };
 
-    let max_depth = policy_config.subagents.max_depth;
-    let policy    = PolicyEngine::new(policy_config);
+    // Read subagents config from the policy (already loaded above).
+    let max_depth = {
+        // Re-read so we can get subagents config without holding the Arc lock
+        // (the common path; the value doesn't change during normal operation)
+        let guard = policy_arc.read().await;
+        guard.config.subagents.max_depth
+    };
 
-    let supervisor = Supervisor::new(handle.clone(), policy);
+    // Supervisor — pass policy_arc so the evolution applier can hot-swap the engine.
+    let supervisor = Supervisor::new(handle.clone(), Arc::clone(&policy_arc));
+    let sv_cmd_tx  = supervisor.cmd_tx();
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
     // Agent turn engine — shares key + model Arcs so browser UI changes take effect immediately
+    let (soul_path, soul_content) = load_soul();
     let engine: Arc<TurnEngine> = Arc::new(TurnEngine::new(
         AnthropicProvider::new_shared(Arc::clone(&api_key_arc), Arc::clone(&model_arc)),
         16,
-        Some(load_soul()),
+        Some(soul_content),
     ));
-    // soul_arc: Phase 2 evolution handler writes here to hot-swap the system prompt
-    let _soul_arc = engine.system_arc();
+    let soul_arc = engine.system_arc();
+
+    // Evolution applier — subscribes to EvolutionProposed and applies changes live.
+    spawn_evolution_applier(
+        bcast.subscribe(),
+        handle.clone(),
+        Arc::clone(&soul_arc),
+        soul_path,
+        policy_path,
+        plugins_path,
+        Arc::clone(&policy_arc),
+        sv_cmd_tx,
+    );
 
     // Shared state for the agent router
     let tool_reg: Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>> =
@@ -135,6 +168,169 @@ async fn main() -> anyhow::Result<()> {
     tokio::signal::ctrl_c().await?;
     eprintln!("[agentd] shutting down");
     Ok(())
+}
+
+// ── evolution applier ─────────────────────────────────────────────────────────
+
+fn spawn_evolution_applier(
+    mut bus_rx:   broadcast::Receiver<Event>,
+    bus:          apexos_core::BusHandle,
+    soul_arc:     Arc<RwLock<String>>,
+    soul_path:    PathBuf,
+    policy_path:  PathBuf,
+    plugins_path: PathBuf,
+    policy_arc:   Arc<RwLock<PolicyEngine>>,
+    sv_cmd_tx:    mpsc::Sender<SupervisorCmd>,
+) {
+    tokio::spawn(async move {
+        loop {
+            match bus_rx.recv().await {
+                Ok(Event::EvolutionProposed { id, proposal, proposed_by: _ }) => {
+                    let proposal_copy = proposal.clone();
+                    let result = apply_evolution(
+                        id, proposal,
+                        &soul_arc, &soul_path, &policy_path, &plugins_path,
+                        &policy_arc, &sv_cmd_tx,
+                    ).await;
+                    match result {
+                        Ok(summary) => {
+                            eprintln!("[evolution] applied {:?}: {summary}", id);
+                            bus.emit(Event::EvolutionApplied {
+                                id,
+                                proposal:      proposal_copy,
+                                patch_summary: summary,
+                                applied_by:    None,
+                            }).await;
+                        }
+                        Err(e) => {
+                            eprintln!("[evolution] apply failed {:?}: {e}", id);
+                            bus.emit(Event::Error {
+                                session: None,
+                                message: format!("evolution {}: {e}", id.0),
+                            }).await;
+                        }
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+                Ok(_)  => {}
+            }
+        }
+    });
+}
+
+async fn apply_evolution(
+    _id:          EvolutionId,
+    proposal:     EvolutionProposal,
+    soul_arc:     &Arc<RwLock<String>>,
+    soul_path:    &PathBuf,
+    policy_path:  &PathBuf,
+    plugins_path: &PathBuf,
+    policy_arc:   &Arc<RwLock<PolicyEngine>>,
+    sv_cmd_tx:    &mpsc::Sender<SupervisorCmd>,
+) -> anyhow::Result<String> {
+    match proposal {
+        EvolutionProposal::UpdateSystemPrompt { content, reason: _ } => {
+            tokio::fs::write(soul_path, &content).await?;
+            *soul_arc.write().await = content.clone();
+            eprintln!("[evolution] soul.md updated ({} chars)", content.len());
+            Ok(format!("system prompt updated ({} chars)", content.len()))
+        }
+
+        EvolutionProposal::UpdatePolicyRule { tool_pattern, new_mode, reason: _ } => {
+            let toml_text = tokio::fs::read_to_string(policy_path).await?;
+            let mut doc = toml_text.parse::<toml_edit::DocumentMut>()?;
+            let mode_str = match new_mode {
+                PolicyMode::Suggest  => "suggest",
+                PolicyMode::AutoEdit => "auto-edit",
+                PolicyMode::Yolo     => "yolo",
+            };
+            if let Some(rules) = doc.get_mut("rules").and_then(|v| v.as_table_mut()) {
+                rules.insert(&tool_pattern, toml_edit::value(mode_str));
+            }
+            let new_toml = doc.to_string();
+            tokio::fs::write(policy_path, &new_toml).await?;
+            let new_config = PolicyConfig::load(policy_path)?;
+            *policy_arc.write().await = PolicyEngine::new(new_config);
+            eprintln!("[evolution] policy rule '{tool_pattern}' = '{mode_str}'");
+            Ok(format!("policy rule '{tool_pattern}' set to '{mode_str}'"))
+        }
+
+        EvolutionProposal::RegisterMcpServer { name, command, env, reason: _ } => {
+            let toml_text = tokio::fs::read_to_string(plugins_path).await?;
+            let mut doc = toml_text.parse::<toml_edit::DocumentMut>()?;
+            if let Some(arr) = doc.get_mut("plugin").and_then(|v| v.as_array_of_tables_mut()) {
+                let mut tbl = toml_edit::Table::new();
+                tbl.insert("id",      toml_edit::value(name.as_str()));
+                tbl.insert("cmd",     toml_edit::value(command.as_str()));
+                tbl.insert("restart", toml_edit::value("always"));
+                if !env.is_empty() {
+                    let mut env_inline = toml_edit::InlineTable::new();
+                    for (k, v) in &env {
+                        env_inline.insert(k, toml_edit::Value::from(v.as_str()));
+                    }
+                    tbl.insert("env",
+                        toml_edit::Item::Value(toml_edit::Value::InlineTable(env_inline)));
+                }
+                arr.push(tbl);
+            }
+            tokio::fs::write(plugins_path, doc.to_string()).await?;
+            let config = PluginConfig {
+                id:      name.clone(),
+                cmd:     command,
+                args:    vec![],
+                env:     if env.is_empty() { None } else { Some(env) },
+                cwd:     None,
+                restart: RestartPolicy::Always,
+            };
+            sv_cmd_tx.send(SupervisorCmd::SpawnPlugin { config }).await
+                .map_err(|_| anyhow::anyhow!("supervisor channel closed"))?;
+            eprintln!("[evolution] registered MCP server '{name}'");
+            Ok(format!("registered MCP server '{name}'"))
+        }
+
+        EvolutionProposal::UnregisterMcpServer { name, reason: _ } => {
+            let toml_text = tokio::fs::read_to_string(plugins_path).await?;
+            let mut doc = toml_text.parse::<toml_edit::DocumentMut>()?;
+            if let Some(arr) = doc.get_mut("plugin").and_then(|v| v.as_array_of_tables_mut()) {
+                let idx = (0..arr.len()).find(|&i| {
+                    arr.get(i)
+                        .and_then(|t| t.get("id"))
+                        .and_then(|v| v.as_str()) == Some(name.as_str())
+                });
+                if let Some(i) = idx { arr.remove(i); }
+            }
+            tokio::fs::write(plugins_path, doc.to_string()).await?;
+            sv_cmd_tx.send(SupervisorCmd::KillPlugin { id: PluginId(name.clone()) }).await
+                .map_err(|_| anyhow::anyhow!("supervisor channel closed"))?;
+            eprintln!("[evolution] unregistered MCP server '{name}'");
+            Ok(format!("unregistered MCP server '{name}'"))
+        }
+
+        EvolutionProposal::HotReloadSubsystem { subsystem } => {
+            match subsystem {
+                Subsystem::Agent => {
+                    let content = tokio::fs::read_to_string(soul_path).await.unwrap_or_default();
+                    *soul_arc.write().await = content;
+                    eprintln!("[evolution] agent system prompt reloaded from disk");
+                    Ok("reloaded agent system prompt from disk".into())
+                }
+                Subsystem::Policy => {
+                    let new_config = PolicyConfig::load(policy_path)?;
+                    *policy_arc.write().await = PolicyEngine::new(new_config);
+                    eprintln!("[evolution] policy reloaded from disk");
+                    Ok("reloaded policy from disk".into())
+                }
+                Subsystem::Plugins => {
+                    Ok("plugins hot-reload: use register_mcp_server / unregister_mcp_server \
+                        for individual plugins".into())
+                }
+                Subsystem::Gateway => {
+                    Ok("gateway hot-reload not supported without daemon restart".into())
+                }
+            }
+        }
+    }
 }
 
 // ── agent router ──────────────────────────────────────────────────────────────
@@ -284,7 +480,7 @@ async fn child_turn(
 
 // ── utilities ─────────────────────────────────────────────────────────────────
 
-/// Gather all plugin tools and inject the synthetic agent.spawn tool.
+/// Gather all plugin tools and inject the synthetic virtual tools.
 async fn gather_tools(
     tool_reg: &Arc<RwLock<HashMap<PluginId, Vec<ToolSpec>>>>,
 ) -> Vec<ToolSpec> {
@@ -326,7 +522,7 @@ fn propose_evolution_spec() -> ToolSpec {
         description: "Propose a structural change to agentd: register or remove an MCP plugin, \
                       update a policy rule, update your own system prompt (soul.md), or \
                       hot-reload a subsystem. Every proposal is recorded as an event and \
-                      flows through the approval engine before being applied.".into(),
+                      applied immediately (gated by the evolution.* policy rule).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -465,5 +661,14 @@ mod tests {
         assert_eq!(spec.name, "agent_spawn");
         let required = spec.input_schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("prompt")));
+    }
+
+    #[test]
+    fn propose_evolution_spec_has_required_fields() {
+        let spec = propose_evolution_spec();
+        assert_eq!(spec.name, "propose_evolution");
+        let required = spec.input_schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v.as_str() == Some("kind")));
+        assert!(required.iter().any(|v| v.as_str() == Some("reason")));
     }
 }
