@@ -81,10 +81,10 @@
 
   </div><!-- #app -->
 
-  <!-- ─── Window content (hidden containers, mounted into WinBox) ──────────── -->
+  <!-- ─── Window content (hidden until WinBox mounts them; display restored by openWin) -->
 
   <!-- Agent window -->
-  <div id="win-agent-content" class="win-content">
+  <div id="win-agent-content" class="win-content" style="display:none">
     <div id="output"></div>
     <div id="input-row">
       <span id="prompt-char">❯</span>
@@ -97,7 +97,7 @@
   </div>
 
   <!-- Sensors window -->
-  <div id="win-sensors-content" class="win-content sensor-win">
+  <div id="win-sensors-content" class="win-content sensor-win" style="display:none">
     <div class="sensor-section">
       <div class="sensor-sec-title">ENVIRONMENT <span class="sensor-age" id="sensor-age"></span></div>
       <div class="sensor-grid">
@@ -125,17 +125,17 @@
   </div>
 
   <!-- Cerebro window (iframe) -->
-  <div id="win-cerebro-content" class="win-content iframe-win">
-    <iframe id="cerebro-iframe" src="" frameborder="0" allow="same-origin"></iframe>
+  <div id="win-cerebro-content" class="win-content iframe-win" style="display:none">
+    <iframe id="cerebro-iframe" frameborder="0" allow="same-origin"></iframe>
   </div>
 
   <!-- SensorHead window (iframe) -->
-  <div id="win-sensorhead-content" class="win-content iframe-win">
-    <iframe id="sensorhead-iframe" src="" frameborder="0" allow="same-origin"></iframe>
+  <div id="win-sensorhead-content" class="win-content iframe-win" style="display:none">
+    <iframe id="sensorhead-iframe" frameborder="0" allow="same-origin"></iframe>
   </div>
 
   <!-- Settings window (Alpine) -->
-  <div id="win-settings-content" class="win-content settings-win" x-data="settingsApp()">
+  <div id="win-settings-content" class="win-content settings-win" style="display:none" x-data="settingsApp()">
     <div class="settings-nav">
       <button :class="tab==='soul' && 'active'" @click="tab='soul'">Soul</button>
       <button :class="tab==='policy' && 'active'" @click="tab='policy'">Policy</button>

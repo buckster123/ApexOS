@@ -127,6 +127,7 @@ html, body {
 /* ─── Desktop canvas ──────────────────────────────────────────────────────── */
 #desktop-canvas {
   flex: 1;
+  min-height: 0;   /* prevent flex children from overflowing the column layout */
   position: relative;
   overflow: hidden;
 }
@@ -146,12 +147,14 @@ html, body {
 /* ─── Dock ────────────────────────────────────────────────────────────────── */
 #dock {
   height: var(--dock-h);
+  max-height: var(--dock-h);
   display: flex; align-items: center; justify-content: center; gap: 6px;
   padding: 0 16px;
   background: rgba(19,22,32,0.88);
   backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  overflow: hidden;
   z-index: 1000;
 }
 .dock-btn {

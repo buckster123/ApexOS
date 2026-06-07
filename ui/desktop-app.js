@@ -73,12 +73,19 @@ function openWin(id) {
     if (iframe && !iframe.getAttribute('src')) iframe.src = `http://${location.hostname}:8080`;
   }
 
+  // Restore display before WinBox mounts (content starts display:none to avoid
+  // unmounted win-content divs inflating the document body height)
+  content.style.display = '';
+
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
     ...cfg,
     class: `wb-apexos wb-${id}`,
     mount: content,
-    onclose() { delete wins[id]; dockMark(id, false); return false; },
+    onclose() {
+      content.style.display = 'none';
+      delete wins[id]; dockMark(id, false); return false;
+    },
     onfocus() { dockMark(id, true); },
     onblur()  { /* keep mark while open */ },
   });
