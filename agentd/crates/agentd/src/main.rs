@@ -84,9 +84,29 @@ async fn main() -> anyhow::Result<()> {
         Ok(c)  => { eprintln!("[agentd] policy mode: {:?}", c.mode); c }
         Err(e) => { eprintln!("[agentd] policy config: {e} — using defaults"); PolicyConfig::default() }
     };
-    let policy_mode_str = format!("{:?}", policy_config.mode).to_uppercase();
+    let policy_mode_str = format!("{:?}", policy_config.mode).to_lowercase().replace("autoedit", "auto-edit");
+    let policy_mode_arc: Arc<RwLock<String>> = Arc::new(RwLock::new(policy_mode_str));
     let policy_arc: Arc<RwLock<PolicyEngine>> =
         Arc::new(RwLock::new(PolicyEngine::new(policy_config)));
+
+    // Channel for live policy mode changes from the /api/policy gateway route.
+    let (policy_set_tx, mut policy_set_rx) = tokio::sync::mpsc::channel::<String>(8);
+    {
+        let policy_arc2 = Arc::clone(&policy_arc);
+        let policy_mode_arc2 = Arc::clone(&policy_mode_arc);
+        tokio::spawn(async move {
+            while let Some(mode_str) = policy_set_rx.recv().await {
+                let new_mode = match mode_str.as_str() {
+                    "auto-edit" => PolicyMode::AutoEdit,
+                    "yolo"      => PolicyMode::Yolo,
+                    _           => PolicyMode::Suggest,
+                };
+                policy_arc2.write().await.config.mode = new_mode;
+                *policy_mode_arc2.write().await = mode_str.clone();
+                eprintln!("[agentd] policy mode changed to: {mode_str}");
+            }
+        });
+    }
 
     // Gateway
     let ui_dir = PathBuf::from(
@@ -121,7 +141,8 @@ async fn main() -> anyhow::Result<()> {
         bcast:                bcast.clone(),
         api_key:              Arc::clone(&api_key_arc),
         model:                Arc::clone(&model_arc),
-        policy_mode:          policy_mode_str,
+        policy_mode:          Arc::clone(&policy_mode_arc),
+        policy_set_tx,
         ui_dir,
         events_dir:           log_dir.clone(),
         sessions_dir:         log_dir.join("sessions"),

@@ -736,10 +736,25 @@ function setStatus(cls, label) {
   document.getElementById('ws-label').textContent = label;
 }
 
-function setPolicyBadge(mode) {
-  const badge = document.getElementById('policy-badge');
-  badge.textContent = mode || '';
-  badge.className   = `policy-badge policy-${(mode || '').toLowerCase().replace(/[^a-z]/g, '')}`;
+function setPolicySelect(mode) {
+  const sel = document.getElementById('policy-select');
+  if (!sel || !mode) return;
+  sel.value = mode;
+  sel.className = `policy-select policy-${(mode || '').toLowerCase().replace(/[^a-z]/g, '')}`;
+}
+
+function initPolicySelect() {
+  const sel = document.getElementById('policy-select');
+  if (!sel) return;
+  sel.addEventListener('change', async () => {
+    try {
+      await fetch('/api/policy', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify({ mode: sel.value }),
+      });
+    } catch { /* offline */ }
+  });
 }
 
 function scrollDown() {
@@ -776,7 +791,7 @@ async function checkAndMaybePromptKey() {
 
     // Apply server-reported state
     if (data.model)       initModelSelector(data.model);
-    if (data.policy_mode) setPolicyBadge(data.policy_mode);
+    if (data.policy_mode) setPolicySelect(data.policy_mode);
 
     if (data.api_key_set) return;
   } catch {
@@ -1010,6 +1025,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  initPolicySelect();
   runBoot()
     .then(checkAndMaybePromptKey)
     .then(() => {

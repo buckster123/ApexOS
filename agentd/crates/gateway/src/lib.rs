@@ -15,7 +15,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
-use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
+use apexos_core::{BusHandle, Event, Message as CoreMessage, PolicyMode, SessionId};
+use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct GatewayState {
@@ -23,7 +24,9 @@ pub struct GatewayState {
     pub bcast:                 broadcast::Sender<Event>,
     pub api_key:               Arc<RwLock<String>>,
     pub model:                 Arc<RwLock<String>>,
-    pub policy_mode:           String,
+    pub policy_mode:           Arc<RwLock<String>>,
+    /// Send a mode string ("suggest" | "auto-edit" | "yolo") to live-update the PolicyEngine.
+    pub policy_set_tx:         mpsc::Sender<String>,
     pub ui_dir:                PathBuf,
     pub events_dir:            PathBuf,
     pub sessions_dir:          PathBuf,
@@ -40,6 +43,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/status",      get(status_handler))
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
+        .route("/api/policy",   post(set_policy_handler))
         .route("/api/power",              post(power_handler))
         .route("/api/evolution/history",  get(evolution_history_handler))
         .route("/api/evolution/stats",    get(evolution_stats_handler))
@@ -218,13 +222,27 @@ async fn static_handler(
 // ── API routes ────────────────────────────────────────────────────────────────
 
 async fn status_handler(State(state): State<GatewayState>) -> impl IntoResponse {
-    let key_set = !state.api_key.read().await.is_empty();
-    let model   = state.model.read().await.clone();
+    let key_set     = !state.api_key.read().await.is_empty();
+    let model       = state.model.read().await.clone();
+    let policy_mode = state.policy_mode.read().await.clone();
     Json(serde_json::json!({
         "api_key_set":  key_set,
         "model":        model,
-        "policy_mode":  state.policy_mode,
+        "policy_mode":  policy_mode,
     }))
+}
+
+async fn set_policy_handler(
+    State(state): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mode = body["mode"].as_str().unwrap_or("").trim().to_string();
+    if !matches!(mode.as_str(), "suggest" | "auto-edit" | "yolo") {
+        return Json(serde_json::json!({ "ok": false, "error": "unknown mode" }));
+    }
+    *state.policy_mode.write().await = mode.clone();
+    let _ = state.policy_set_tx.send(mode).await;
+    Json(serde_json::json!({ "ok": true }))
 }
 
 async fn set_key_handler(

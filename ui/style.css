@@ -219,18 +219,22 @@ html, body {
 #model-select:hover { border-color: var(--accent); color: var(--fg); }
 #model-select option { background: #111; color: var(--fg); }
 
-/* Policy mode badge */
-.policy-badge {
+/* Policy mode selector */
+.policy-select {
+  font-family: var(--mono);
   font-size: 9px;
-  letter-spacing: 0.1em;
-  padding: 1px 5px;
+  letter-spacing: 0.08em;
+  padding: 2px 5px;
   border-radius: var(--radius);
-  border: 1px solid currentColor;
+  background: transparent;
+  cursor: pointer;
   flex-shrink: 0;
 }
-.policy-suggest   { color: var(--fg-dim); }
-.policy-autoedit  { color: var(--tool-fg); }
-.policy-yolo      { color: var(--error); animation: pulse 2s ease infinite; }
+.policy-select:focus { outline: none; }
+.policy-select.policy-suggest  { border: 1px solid var(--fg-dim); color: var(--fg-dim); }
+.policy-select.policy-autoedit { border: 1px solid var(--tool-fg); color: var(--tool-fg); }
+.policy-select.policy-yolo     { border: 1px solid var(--error);   color: var(--error); animation: pulse 2s ease infinite; }
+.policy-select option { background: var(--bg); color: var(--fg); }
 
 #hdr-status {
   display: flex;
