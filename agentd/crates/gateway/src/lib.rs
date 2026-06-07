@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
+use apexos_plugins::{PolicyEngine, Rule};
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -35,6 +36,7 @@ pub struct GatewayState {
     /// Shared secret for /sensor-bridge WS connections. Empty = no auth required.
     pub sensor_bridge_token:   Arc<String>,
     pub soul_path:             PathBuf,
+    pub policy_arc:            Arc<RwLock<PolicyEngine>>,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -44,7 +46,8 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/status",      get(status_handler))
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
-        .route("/api/policy",   post(set_policy_handler))
+        .route("/api/policy",         post(set_policy_handler))
+        .route("/api/policy/rules",   get(get_policy_rules_handler))
         .route("/api/soul",     get(get_soul_handler).post(set_soul_handler))
         .route("/api/power",              post(power_handler))
         .route("/api/evolution/history",  get(evolution_history_handler))
@@ -523,6 +526,20 @@ async fn run_command_handler(
         Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
         Err(_)     => Json(serde_json::json!({ "ok": false, "error": "timed out (30s)" })),
     }
+}
+
+// ── policy rules ─────────────────────────────────────────────────────────────
+
+async fn get_policy_rules_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let engine = state.policy_arc.read().await;
+    let rules: HashMap<String, &'static str> = engine.config.rules.iter()
+        .map(|(k, v)| (k.clone(), match v {
+            Rule::Allow     => "allow",
+            Rule::Ask       => "ask",
+            Rule::Workspace => "workspace",
+        }))
+        .collect();
+    Json(serde_json::json!({ "rules": rules }))
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

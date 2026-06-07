@@ -154,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         next_session_id:      Arc::clone(&next_session_id),
         sensor_bridge_token:  sensor_bridge_token,
         soul_path:            soul_path.clone(),
+        policy_arc:           Arc::clone(&policy_arc),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
