@@ -8,6 +8,8 @@
 - [x] Tool registry populated from server capabilities (66 tools from CerebroCortex)
 - [x] Restart policy (always / on-failure)
 - [x] Tested against real CerebroCortex binary
+- [x] Phase 2 hot-reload: `SupervisorCmd::{SpawnPlugin, KillPlugin, HotReload}` via `cmd_tx()`
+- [x] Phase 2 policy: `Arc<RwLock<PolicyEngine>>` shared with evolution applier for live reload
 
 ## CerebroCortex entrypoint (dev)
 `/home/andre/Projects/CerebroCortex/cerebro-mcp`
@@ -20,6 +22,18 @@ Startup time: ~2–3 seconds (loads sentence-transformers embeddings).
 ## Reference
 - `docs/reference/core_loops.rs` — Loop 3 (plugin supervisor shape)
 - `agentd/config/plugins.toml` — plugin declarations
+
+## SupervisorCmd channel (Phase 2)
+
+`Supervisor::cmd_tx()` returns a clone of the internal channel sender. External callers use it to drive lifecycle changes without restarting the daemon:
+
+| Command | Effect |
+|---------|--------|
+| `SpawnPlugin { config }` | Start a new MCP plugin; emits `PluginUp` on success |
+| `KillPlugin { id }` | Kill + remove; config removed so no restart; emits `PluginDown` |
+| `HotReload { id }` | Kill current instance; config retained → handle_died restarts it (Always) or forced 300ms later (non-Always) |
+
+Policy is `Arc<RwLock<PolicyEngine>>` — writing the Arc from the evolution applier is all that's needed to reload policy; no channel message required.
 
 ## Notes
 - Drain child stderr in a background task immediately after spawn — if it fills the OS pipe buffer, the child blocks and the handshake hangs

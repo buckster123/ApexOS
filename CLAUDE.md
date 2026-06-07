@@ -45,12 +45,12 @@ ui/               Frontend — index.html + style.css + app.js (served by axum S
 - Multi-agent: `parent: Option<SessionId>` on `AgentContext`; no architecture change
 
 ## Deferred to keyboard (do not guess)
-- Hot-reload mechanics
 - Event-log format (lean JSONL v1)
 - tokio task-shutdown ordering
 
 ## Resolved locked items
 - **MCP framing**: newline-delimited JSON, protocol `"2024-11-05"`. Real entrypoint: `/home/andre/Projects/CerebroCortex/cerebro-mcp`
+- **Hot-reload mechanics**: `SupervisorCmd::{SpawnPlugin,KillPlugin,HotReload}` via `cmd_tx()`; policy is `Arc<RwLock<PolicyEngine>>` (write-swap for live reload); soul.md is `Arc<RwLock<String>>`. Pi config files writable by `agentd` user (`chown agentd:agentd /etc/agentd/{soul.md,policy.toml,plugins.toml}`).
 
 ## Key files
 - `docs/reference/core_types.rs` — load-bearing types (Event, ToolCall, AgentContext, Message)

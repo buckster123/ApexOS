@@ -25,7 +25,7 @@ EnvironmentFile=-/etc/agentd/env
 # Hardening (relax only as specific tools require it).
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/agentd
+ReadWritePaths=/var/lib/agentd /etc/agentd
 ProtectHome=true
 PrivateTmp=true
 

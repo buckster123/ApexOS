@@ -41,25 +41,30 @@ No "almost done" — item is checked when tested and committed.
 
 ---
 
-## Phase 2 — Config Evolution + Hot-Reload
+## Phase 2 — Config Evolution + Hot-Reload ✓
 
 **Goal:** Agent can propose and apply real structural changes without daemon restart.
 
-- [ ] `crates/plugins/Cargo.toml` — add `toml_edit = "0.22"` (lossless TOML editing, distinct from `toml = "0.8"`)
-- [ ] `crates/plugins/src/supervisor.rs` — add `SupervisorCmd::HotReload { id: PluginId }` and handler (SIGTERM → 2s → spawn_plugin → handshake → re-register)
-- [ ] `crates/agentd/src/main.rs` — implement full `propose_evolution` handler:
-  - `RegisterMcpServer` / `UnregisterMcpServer`: patch plugins.toml via `toml_edit`, send `SupervisorCmd::HotReload`
-  - `UpdatePolicyRule`: patch policy.toml via `toml_edit`, swap `Arc<RwLock<PolicyEngine>>`
-  - `UpdateSystemPrompt`: write soul.md, swap `Arc<RwLock<String>>` for system prompt
-  - `HotReloadSubsystem`: dispatch appropriate reload without file change
-- [ ] All proposals: emit `Event::EvolutionApplied` on success, `Event::Error` on failure (no partial state)
-- [ ] `agentd/config/policy.toml` — add `evolution.*` rule (default `"ask"`)
-- [ ] `crates/agentd/src/main.rs` — implement `rollback_evolution(id: EvolutionId)`: restore pre-patch snapshot from Cerebro, re-apply
-- [ ] Cerebro episode wrapping: `episode_start` → apply → `record_procedure_outcome` → `episode_end`
-- [ ] End-to-end test on Pi: propose `RegisterMcpServer` → approve in browser → plugin reloads, new tools appear, no daemon restart
-- [ ] Commit: `feat(evolution): config evolution and hot-reload`
-- [ ] Update `docs/claude/plugin-supervisor.md`, `docs/claude/policy-engine.md`
-- [ ] Update CLAUDE.md: move "Hot-reload mechanics" from "Deferred" to "Resolved"
+- [x] `crates/agentd/Cargo.toml` — add `toml_edit = "0.22"` (lossless TOML editing)
+- [x] `crates/plugins/src/supervisor.rs` — `SupervisorCmd::{SpawnPlugin, KillPlugin, HotReload}`; `cmd_tx()` accessor; `Arc<RwLock<PolicyEngine>>` replaces owned field
+- [x] `crates/agentd/src/main.rs` — `spawn_evolution_applier()` + `apply_evolution()`:
+  - `UpdateSystemPrompt`: write soul.md + Arc swap (live, no restart)
+  - `UpdatePolicyRule`: toml_edit patch + Arc swap (live, no restart)
+  - `RegisterMcpServer`: toml_edit append + `SupervisorCmd::SpawnPlugin`
+  - `UnregisterMcpServer`: toml_edit remove + `SupervisorCmd::KillPlugin`
+  - `HotReloadSubsystem`: in-memory reload of agent/policy; stub for plugins/gateway
+- [x] All proposals: emit `Event::EvolutionApplied` on success, `Event::Error` on failure
+- [x] `agentd/config/policy.toml` — `"propose_evolution" = "ask"` (gates apply at approval UX)
+- [x] `agentd/deploy/agentd.service` — `ReadWritePaths=/etc/agentd` (evolution applier writes config)
+- [x] Pi config ownership — `chown agentd:agentd /etc/agentd/{soul.md,policy.toml,plugins.toml}`
+- [x] End-to-end test on Pi: `UpdateSystemPrompt` → `ApprovalPending` → approve → `EvolutionApplied` → soul.md updated on disk and in-memory (verified)
+- [x] Commit: `feat(evolution): config evolution and hot-reload`
+- [x] Update `docs/claude/plugin-supervisor.md`
+
+**Deferred to Phase 3:**
+- [ ] Rollback tool (`rollback_evolution`) with Cerebro episode snapshot/restore
+- [ ] Cerebro episode wrapping around each apply
+- [ ] Full RegisterMcpServer end-to-end test with a real new plugin
 
 ---
 
