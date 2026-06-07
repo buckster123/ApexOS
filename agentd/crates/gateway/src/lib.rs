@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
-use apexos_core::{BusHandle, Event, Message as CoreMessage, PolicyMode, SessionId};
+use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
