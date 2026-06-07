@@ -175,9 +175,9 @@ Baked into `agentd/crates/agentd/src/main.rs` as a new virtual tool (same patter
 - [x] Supervisor dispatch: `schedule_*` tools forwarded via `(session, call_id, tool, args)` channel
 - [x] `run_scheduler` + `spawn_scheduler_handler` spawned in `main()` after evolution applier
 - [x] Policy rules: all three = `yolo`
-- [ ] Smoke test: schedule `"0 * * * * *"` (every minute) "what time is it?"; verify agent self-fires
-- [ ] Cancel it; verify no more fires
-- [ ] Daemon restart; verify schedule restored
+- [x] Smoke test: hotloaded without restart — agent scheduled, fired autonomously, cancelled; all pass
+- [x] Cancel it; verified no more fires
+- [ ] Daemon restart; verify schedule restored (deferred — low risk given JSONL persistence)
 - [x] Commit: `feat(scheduler): schedule_task virtual tool — cron-driven autonomous turns`
 
 ---
