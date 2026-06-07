@@ -35,9 +35,9 @@ No "almost done" — item is checked when tested and committed.
 - [x] `crates/agentd/src/main.rs` — `load_soul()` with fallback chain; `Some(load_soul())` passed to `TurnEngine::new()`; `_soul_arc` extracted for Phase 2
 - [x] `store_procedure` / `record_procedure_outcome` / `find_relevant_procedures` available via CerebroCortex MCP (66 tools); soul.md instructs the agent when/how to use them
 - [x] 36 tests passing (0 failures)
-- [ ] Integration test on Pi: store a procedure in one turn, recall it in the next
-- [ ] Commit: `feat(evolution): soul.md system prompt and Arc hot-reload wiring`
-- [ ] Update `docs/claude/agent-turn-engine.md` ✓ (done)
+- [x] Integration test on Pi: store_procedure called in turn 1; find_relevant_procedures called in turn 2 — loop verified
+- [x] Commit: `feat(evolution): soul.md system prompt and Arc hot-reload wiring`
+- [x] Update `docs/claude/agent-turn-engine.md`
 
 ---
 
