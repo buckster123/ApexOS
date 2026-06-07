@@ -108,11 +108,11 @@ No "almost done" — item is checked when tested and committed.
 - [x] On daemon startup: scan sessions dir, load all sessions into `histories` HashMap (restores conversation across restarts); verified on Pi
 - [x] `/api/sessions` gateway endpoint — returns [{session_id, last_active, message_count, preview}] sorted newest-first; verified live
 
-### 5b — Server-side session ID issuance + WS handshake
-- [ ] WS connect handshake: client sends `{"type":"hello","resume_session":"sid_xxx"}` (or omits for new session); server responds `{"type":"session_init","session_id":"sid_xxx","history":[...]}`
-- [ ] Server issues session IDs (UUID or sequential); client stores in localStorage and sends on reconnect
-- [ ] History replay on join: gateway sends history as a `session_history` burst to the newly connected WS client only (not broadcast)
-- [ ] Any two clients sending the same session_id join the same live session — cage kiosk + web browser converge
+### 5b — Server-side session ID issuance + WS handshake ✓
+- [x] On WS connect: server assigns fresh session_id immediately (AtomicU64 counter); sends `{"type":"session_init","session_id":N,"history":[]}` via priority channel (no blocking)
+- [x] Client sends `{"type":"hello","resume_session":N}` → server updates WS-bound session_id, re-sends session_init with full history replay to this client only
+- [x] All subsequent frames from client have server's session_id injected (client field ignored) — two clients with same session_id share one live session
+- [x] next_session_id starts above max(loaded_ids) to avoid collision with restored sessions; verified on Pi (restored 2 sessions, counter started at 3219194174)
 
 ### 5c — UI
 - [ ] `app.js`: send hello frame on connect with localStorage session ID; handle `session_init` to pre-populate chat history
