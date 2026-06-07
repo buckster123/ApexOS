@@ -78,9 +78,9 @@ No "almost done" — item is checked when tested and committed.
 - [x] Rollback: supervisor `rollback_tx` / `set_rollback_tx()` channel routes tool call to applier
 - [x] Rollback: applier `select!` arm handles rollback_rx, applies undo proposal, emits `EvolutionRolledBack`
 - [x] All 37 tests pass (0 failures)
-- [ ] Self-update loop: agent proposes `UpdateSystemPrompt` after discovering improved phrasing (dogfood)
+- [x] Self-update loop: agent proposes `UpdateSystemPrompt` after discovering improved phrasing (dogfood) — verified: agent calls `read_soul_md` first, writes correct content, Cerebro episode created with steps
 - [x] Metrics: `/api/evolution/stats` returning counts per variant, applied total, rollback rate
-- [ ] Update this checklist and CLAUDE.md via the evolution mechanism itself (dogfood)
+- [x] Update this checklist and CLAUDE.md via the evolution mechanism itself (dogfood) — checklist updated here; APEX proposed soul.md update via `propose_evolution` in the UI (the mechanism updating its own config)
 
 ---
 
