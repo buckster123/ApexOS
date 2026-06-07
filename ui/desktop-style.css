@@ -287,7 +287,8 @@ html, body {
 #shortcuts-bar { padding: 3px 14px 5px; background: var(--surface); color: var(--text-dim); font-size: 10px; font-family: var(--mono); flex-shrink: 0; }
 
 /* ─── Sensors window ──────────────────────────────────────────────────────── */
-.sensor-win { padding: 10px; gap: 8px; overflow-y: auto; }
+.sensor-win { padding: 10px; gap: 8px; overflow-y: auto; overflow-x: hidden; }
+.sensor-win .sensor-section { flex-shrink: 0; }
 .sensor-section { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 .sensor-sec-title { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--text-dim); margin-bottom: 9px; display: flex; justify-content: space-between; }
 .sensor-age { font-size: 8px; font-weight: 400; color: var(--text-dim); }

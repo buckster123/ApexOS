@@ -102,15 +102,14 @@ function dockMark(id, active) {
 }
 
 // ─── Override transitionToApp for the desktop skin ───────────────────────────
-// app.js defines transitionToApp(); we replace it here so the boot sequence
-// transitions to the OS shell instead of the CLI layout.
+// app.js defines transitionToApp() and `var bootDone` (window.bootDone).
+// We replace transitionToApp here so the boot sequence goes to the OS shell.
 window.transitionToApp = async function() {
-  if (window._bootDone) return;   // guard (app.js uses bootDone var, we use a flag)
-  window._bootDone = true;
+  if (window.bootDone) return;
+  window.bootDone = true;   // sets app.js's var bootDone via window property
 
   const lines = document.getElementById('boot-lines');
   await window._sleep(80);
-  // Use app.js boot helpers if available
   if (typeof addBootLine === 'function') {
     addBootLine(lines, 'ALL SYSTEMS', 'NOMINAL', 'ok');
   }
@@ -119,25 +118,23 @@ window.transitionToApp = async function() {
   document.getElementById('boot').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
 
-  // Set wallpaper logo
   const wl = document.getElementById('wallpaper-logo');
   if (wl) wl.textContent = WALLPAPER_LOGO;
 
   startClock();
+
+  // Enable the chat input (app.js's enableInput is a function declaration → window)
+  if (typeof enableInput === 'function' && ws?.readyState === WebSocket.OPEN) {
+    enableInput(true);
+  }
 
   // Auto-open Agent + Sensors windows after a short settle
   setTimeout(() => openWin('agent'),   100);
   setTimeout(() => openWin('sensors'), 300);
 };
 
-// Make sleep available for the override above (app.js defines it but in local scope)
+// Make sleep available for the override above (app.js defines it in local scope)
 window._sleep = ms => new Promise(r => setTimeout(r, ms));
-
-// Expose bootDone state so app.js transitionToApp guard still works
-Object.defineProperty(window, 'bootDone', {
-  get: () => window._bootDone || false,
-  set: v  => { window._bootDone = v; },
-});
 
 // ─── Sensor widget: keep sidebar values in sync ───────────────────────────────
 // The updateSensorWidget() in app.js reads element IDs — they exist in win-sensors-content.
@@ -238,5 +235,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('hdr-evo')?.addEventListener('click', () => {
     if (typeof showEvoModal === 'function') showEvoModal();
   });
-  // Session shortcuts still work via app.js keyboard handler
+  // Logo dblclick → sessions modal (apexos_history localStorage is never written;
+  // the server-side sessions modal is the right UX for desktop)
+  document.getElementById('hdr-logo')?.addEventListener('dblclick', () => {
+    if (typeof showSessionModal === 'function') showSessionModal();
+  });
 });
