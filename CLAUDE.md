@@ -21,7 +21,7 @@ agentd/           Cargo workspace (binary + 5 library crates)
 docs/reference/   Reference Rust snippets from the handoff package (read-only)
 docs/claude/      Lazy-loaded sub-MDs (see ## Docs below)
 plans/            Architecture docs and handoff package
-ui/               Frontend — index.html + style.css + app.js (served by axum ServeDir)
+ui/               Frontend — CLI skin (index.html/style.css/app.js) + Desktop skin (desktop.html/desktop-style.css/desktop-app.js) + lib/ (WinBox+Alpine, no CDN)
 tools/            Separate Cargo workspace for MCP plugins
   crates/
     apexos-tools/ Shell + fs + http + sysstat MCP server (deployed to /usr/local/bin/)
@@ -45,6 +45,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~15.~~ ✓ Agent bodies Phase 6b — `schedule_task` / `list_schedules` / `cancel_schedule` virtual tools; cron-driven autonomous turns; JSONL persistence at `schedules.jsonl`; 60s poll loop fires `UserPrompt` on bus
 ~~16.~~ ✓ Agent bodies Phase 6c — `notify` tool in `apexos-tools`; surfaces: JSONL log (always) + notify-send toast + espeak-ng TTS + ntfy.sh (env-gated) + Telegram (env-gated); agentd added to audio group; espeak-ng installed; smoke: 3/3 local surfaces fired clean
 ~~17.~~ ✓ Agent bodies Phase 6d — `SensorReading` enum + `Event::SensorReading` in core; `/sensor-bridge` WS endpoint; `apex-sensor-bridge` HTTP-polls SensorHead (BME688 BSEC2 + MLX90640 thermal); `AirQuality` + `ThermalFrame` variants; `sensorhead-dashboard.service`; IAQ > 150 alert routing; smoke: IAQ/T/RH/P + thermal frame flowing live in agentd every 30s; `sensor-head-mcp` proxy plugin (8 pull-mode tools); `plugin 'sensor-head' up — 8 tools` confirmed
+~~18.~~ ✓ Desktop skin Phase A — WinBox 0.2.82 + Alpine.js windowed OS shell; `desktop.html` + `desktop-app.js` + `desktop-style.css`; `ui/lib/` bundled (no CDN); topbar with live model+policy selectors, clock; dock with 5 app buttons; agent/sensors/cerebro/sensorhead/settings windows; lazy iframe loading for Cerebro (8767) + SensorHead (8080); Alpine settings (soul editor, policy mode, plugin list); `/api/soul` GET+POST + `/api/policy` POST in gateway; `cerebro-api.service` at boot (port 8767)
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
@@ -84,6 +85,7 @@ Agent ID for this dev session: **CLAUDE-APEX**
 - Always build on Pi (`~/.cargo/bin/cargo build --release`) — do NOT scp x86 binaries
 - Pi data: `/var/lib/agentd/{workspace,events,cerebro,ui}`
 - **Binary update**: stop service before copying — `systemctl stop agentd` then `cp`, then `start` (running binary gives "text file busy")
+- **Deploy workflow**: commit → push → `git pull` on Pi → `cargo build --release` on Pi → stop/cp/start agentd → `sudo cp ui/* /var/lib/agentd/ui/` (use absolute paths inside sudo, `~` expands to root)
 
 ## Docs
 Sub-specialization docs in `docs/claude/`. Load the relevant one when entering
