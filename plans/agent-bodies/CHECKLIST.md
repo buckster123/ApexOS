@@ -315,7 +315,12 @@ thresholds crossed (e.g. temp > 80°C, motion detected while scheduled away).
       - Agent router: IAQ > 150 with accuracy >= 2 fires autonomous alert turn
       - All three services running: agentd + sensorhead-dashboard + apex-sensor-bridge
       Smoke test: `AirQuality { iaq: 50.0, temperature_c: 21.18, humidity_pct: 61.62 }` + `ThermalFrame { min_c: 25.2, max_c: 33.8 }` in agentd logs
-- [ ] Register sensor-mcp as MCP plugin in plugins.toml (pull-mode: agent queries sensors on demand)
+- [x] Register sensor-mcp as MCP plugin in plugins.toml (pull-mode: agent queries sensors on demand)
+      - Wrote `tools/sensor-head-mcp` proxy (stdlib-only Python, no direct I2C — routes to dashboard REST)
+      - 8 tools: sense_environment, read_thermal, sense_thermal, capture_visual, capture_night, detect_objects, classify_scene, get_head_status
+      - Registered in /etc/agentd/plugins.toml; `plugin 'sensor-head' up — 8 tools` confirmed
+      - Policy rules added (sense/read/detect/classify/status = allow; capture = ask)
+      - Smoke: sense_environment returns 20.56°C, 63.42% RH, IAQ 50 (excellent); read_thermal min 25.4 / max 33.6°C
 - [ ] Add GPIO level reads (digital sensors) — rppal InputPin, configurable pin list via env
 - [ ] `apex-gpio` MCP tool for manual GPIO reads — deferred to Phase 7
 

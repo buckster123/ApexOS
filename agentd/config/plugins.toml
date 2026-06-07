@@ -15,3 +15,8 @@ restart = "always"
 id      = "apexos-tools"
 cmd     = "/usr/local/bin/apexos-tools"
 restart = "always"
+
+[[plugin]]
+id      = "sensor-head"
+cmd     = "/usr/local/bin/sensor-head-mcp"
+restart = "always"
