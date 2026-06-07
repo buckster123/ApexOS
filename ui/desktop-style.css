@@ -93,7 +93,7 @@ html, body {
   flex-shrink: 0;
 }
 #topbar-left { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
-#apex-logo { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 0.04em; user-select: none; }
+#hdr-logo { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 0.04em; user-select: none; cursor: default; }
 #topbar-center { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: center; }
 #topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
