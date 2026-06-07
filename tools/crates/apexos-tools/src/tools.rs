@@ -121,6 +121,19 @@ pub fn list() -> Value {
             "name": "uptime",
             "description": "Report system uptime and load averages.",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "notify",
+            "description": "Send a notification across all available surfaces: JSONL log (always), notify-send toast (best-effort), TTS via espeak-ng or piper (if PIPER_MODEL env set), ntfy.sh push (if NTFY_TOPIC env set), Telegram (if TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env set).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message": { "type": "string", "description": "Notification body — spoken aloud if TTS is available" },
+                    "title":   { "type": "string", "description": "Title for toast and push surfaces (default: ApexOS)" },
+                    "tts":     { "type": "boolean", "description": "Enable TTS (default true)" }
+                },
+                "required": ["message"]
+            }
         }
     ])
 }
@@ -140,6 +153,7 @@ pub fn call(name: &str, args: &Value) -> Value {
         "disk_usage" => disk_usage(args),
         "memory_info" => memory_info(),
         "uptime" => uptime(),
+        "notify" => notify(args),
         _ => tool_error(format!("unknown tool: {}", name)),
     }
 }
@@ -689,5 +703,120 @@ fn uptime() -> Value {
         "load_avg_1": load1,
         "load_avg_5": load5,
         "load_avg_15": load15
+    }))
+}
+
+fn notify(args: &Value) -> Value {
+    let message = match args["message"].as_str() {
+        Some(m) => m.to_string(),
+        None => return tool_error("message is required"),
+    };
+    let title = args["title"].as_str().unwrap_or("ApexOS").to_string();
+    let tts_skip = args["tts"].as_bool().map(|b| !b).unwrap_or(false);
+
+    let mut fired: Vec<String> = Vec::new();
+    let mut failed: Vec<Value> = Vec::new();
+
+    // 1. JSONL log — always, unconditional
+    {
+        use std::io::Write as IoWrite;
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let entry = json!({"ts": ts, "title": title, "message": message});
+        match std::fs::OpenOptions::new()
+            .create(true).append(true)
+            .open("/var/lib/agentd/notifications.jsonl")
+        {
+            Ok(mut f) => { let _ = writeln!(f, "{}", entry); fired.push("jsonl".into()); }
+            Err(e) => { failed.push(json!({"surface": "jsonl", "error": e.to_string()})); }
+        }
+    }
+
+    // 2. notify-send toast (kiosk display) — fire-and-forget, silently fails if no daemon
+    let _ = Command::new("notify-send")
+        .arg(&title)
+        .arg(&message)
+        .spawn();
+    fired.push("notify-send".into());
+
+    // 3. TTS — piper if PIPER_MODEL env set, else espeak-ng
+    if !tts_skip {
+        let tts_ok = if let Ok(model) = std::env::var("PIPER_MODEL") {
+            // Pass message via env var to avoid shell quoting issues
+            Command::new("/bin/sh")
+                .arg("-c")
+                .arg("echo \"$_TTS\" | piper --model \"$_MODEL\" --output-raw | aplay -q -r 22050 -f S16_LE -t raw -")
+                .env("_TTS", &message)
+                .env("_MODEL", &model)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        } else {
+            Command::new("espeak-ng")
+                .arg("-s").arg("145")
+                .arg(&message)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+
+        if tts_ok {
+            fired.push("tts".into());
+        } else {
+            failed.push(json!({"surface": "tts", "error": "espeak-ng/piper unavailable or audio error"}));
+        }
+    }
+
+    // 4. ntfy.sh — only if NTFY_TOPIC env present
+    if let Ok(topic) = std::env::var("NTFY_TOPIC") {
+        let ntfy_url = format!("https://ntfy.sh/{}", topic);
+        match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => match client.post(&ntfy_url)
+                .header("Title", title.as_str())
+                .body(message.clone())
+                .send()
+            {
+                Ok(r) if r.status().is_success() => fired.push("ntfy".into()),
+                Ok(r) => failed.push(json!({"surface": "ntfy", "error": format!("HTTP {}", r.status())})),
+                Err(e) => failed.push(json!({"surface": "ntfy", "error": e.to_string()})),
+            },
+            Err(_) => {}
+        }
+    }
+
+    // 5. Telegram — only if BOT_TOKEN + CHAT_ID env present (repo-portable)
+    if let (Ok(token), Ok(chat_id)) = (
+        std::env::var("TELEGRAM_BOT_TOKEN"),
+        std::env::var("TELEGRAM_CHAT_ID"),
+    ) {
+        let tg_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => match client.post(&tg_url)
+                .json(&json!({
+                    "chat_id": chat_id,
+                    "text": format!("*{}*\n{}", title, message),
+                    "parse_mode": "Markdown"
+                }))
+                .send()
+            {
+                Ok(r) if r.status().is_success() => fired.push("telegram".into()),
+                Ok(r) => failed.push(json!({"surface": "telegram", "error": format!("HTTP {}", r.status())})),
+                Err(e) => failed.push(json!({"surface": "telegram", "error": e.to_string()})),
+            },
+            Err(_) => {}
+        }
+    }
+
+    tool_ok(json!({
+        "surfaces_fired": fired,
+        "surfaces_failed": failed,
     }))
 }

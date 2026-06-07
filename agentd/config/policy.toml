@@ -39,6 +39,9 @@ mode = "suggest"
 "memory_info"  = "yolo"
 "uptime"       = "yolo"
 
+# notifications
+"notify" = "yolo"
+
 # scheduler — agent manages its own heartbeat
 "schedule_task"    = "yolo"
 "list_schedules"   = "yolo"
