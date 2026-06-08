@@ -43,7 +43,7 @@ Look at how `agent/src/turn.rs` or `agentd/src/main.rs` sends MCP tool calls —
 
 ---
 
-## Step 30 — Agent-to-Agent (A2A) messaging
+## ~~Step 30~~ ✓ Agent-to-Agent (A2A) messaging — SHIPPED
 
 Native async messaging between agent sessions — not just parent→child via tool result, but peer-to-peer intent passing.
 
