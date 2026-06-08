@@ -454,10 +454,12 @@
   <!-- hdr-center needed by app.js for tool count + collapse-all -->
   <span id="hdr-center" style="display:none"></span>
 
-  <script src="lib/monaco/vs/loader.js"></script>
-  <script src="lib/winbox.min.js"></script>
+  <!-- xterm must load before monaco/loader.js — monaco's AMD define() hijacks
+       xterm's UMD wrapper and prevents window.Terminal/FitAddon being set -->
   <script src="lib/xterm.min.js"></script>
   <script src="lib/xterm-addon-fit.min.js"></script>
+  <script src="lib/winbox.min.js"></script>
+  <script src="lib/monaco/vs/loader.js"></script>
   <script defer src="lib/alpine.min.js"></script>
   <script src="app.js"></script>
   <script src="desktop-app.js"></script>
