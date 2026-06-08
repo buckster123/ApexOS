@@ -1,4 +1,4 @@
-use apexos_core::{Bus, Event, SessionId, SystemState};
+use apexos_core::{ActionId, Bus, Event, SessionId, SystemState};
 use apexos_gateway::{router, GatewayState};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
@@ -30,6 +30,10 @@ fn make_state(handle: apexos_core::BusHandle, bcast: tokio::sync::broadcast::Sen
         sensor_bridge_token:  Arc::new(String::new()),
         soul_path:            PathBuf::from("."),
         policy_arc:           Arc::new(tokio::sync::RwLock::new(PolicyEngine::new(PolicyConfig::default()))),
+        council_start_tx:     tokio::sync::mpsc::channel::<(SessionId, ActionId, serde_json::Value)>(1).0,
+        council_butt_in:      Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        council_sessions:     Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        council_next_id:      Arc::new(AtomicU64::new(1)),
     }
 }
 

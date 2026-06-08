@@ -2,14 +2,15 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use apexos_core::{BusHandle, CouncilAgentDef, Event, SessionId, ActionId, ToolOutput};
 use apexos_agent::run_council;
+use apexos_gateway::{CouncilButtInMap, CouncilRecord, CouncilSessionsMap};
 
 /// Message type: (calling session, tool call id, raw convene_council args)
 pub type CouncilMsg = (SessionId, ActionId, serde_json::Value);
 
 /// Spawn the council handler task.
 ///
-/// Receives `convene_council` tool calls from the supervisor and runs them
-/// as isolated tokio tasks so multiple councils can run concurrently.
+/// Receives `convene_council` tool calls from the supervisor and direct API
+/// starts from the gateway. Runs each council as an isolated tokio task.
 pub fn spawn_council_handler(
     mut rx:          mpsc::Receiver<CouncilMsg>,
     bcast:           broadcast::Sender<Event>,
@@ -19,14 +20,21 @@ pub fn spawn_council_handler(
     oai_base_url:    Arc<RwLock<String>>,
     backend_arc:     Arc<RwLock<String>>,
     model_arc:       Arc<RwLock<String>>,
+    butt_in_map:     CouncilButtInMap,
+    sessions:        CouncilSessionsMap,
 ) {
     tokio::spawn(async move {
-        // council id counter — simple sequential, sufficient for uniqueness within a run
         let mut counter: u64 = 0;
 
         while let Some((session, call_id, args)) = rx.recv().await {
-            counter += 1;
-            let council_id = format!("c{counter}");
+            // Respect a caller-supplied council_id (used by the gateway for direct API starts)
+            // so the ID is known before the call is made. Fall back to internal counter.
+            let council_id = if let Some(id) = args["council_id"].as_str() {
+                id.to_owned()
+            } else {
+                counter += 1;
+                format!("c{counter}")
+            };
 
             let topic = args["topic"].as_str().unwrap_or("").to_owned();
             let max_rounds = args["max_rounds"].as_u64().unwrap_or(3) as u32;
@@ -36,6 +44,27 @@ pub fn spawn_council_handler(
             let agent_defs: Vec<CouncilAgentDef> = match args["agents"].as_array() {
                 Some(arr) => arr.iter().filter_map(parse_agent_def).collect(),
                 None => {
+                    // Skip ToolResult for gateway-initiated calls (sentinel session)
+                    if session.0 != u64::MAX {
+                        let bus_c = bus.clone();
+                        let call_id_c = call_id;
+                        tokio::spawn(async move {
+                            bus_c.emit(Event::ToolResult {
+                                session,
+                                call: call_id_c,
+                                output: ToolOutput {
+                                    ok: false,
+                                    content: serde_json::json!("convene_council: 'agents' must be an array"),
+                                },
+                            }).await;
+                        });
+                    }
+                    continue;
+                }
+            };
+
+            if agent_defs.is_empty() {
+                if session.0 != u64::MAX {
                     let bus_c = bus.clone();
                     let call_id_c = call_id;
                     tokio::spawn(async move {
@@ -44,27 +73,11 @@ pub fn spawn_council_handler(
                             call: call_id_c,
                             output: ToolOutput {
                                 ok: false,
-                                content: serde_json::json!("convene_council: 'agents' must be an array"),
+                                content: serde_json::json!("convene_council: at least one agent required"),
                             },
                         }).await;
                     });
-                    continue;
                 }
-            };
-
-            if agent_defs.is_empty() {
-                let bus_c = bus.clone();
-                let call_id_c = call_id;
-                tokio::spawn(async move {
-                    bus_c.emit(Event::ToolResult {
-                        session,
-                        call: call_id_c,
-                        output: ToolOutput {
-                            ok: false,
-                            content: serde_json::json!("convene_council: at least one agent required"),
-                        },
-                    }).await;
-                });
                 continue;
             }
 
@@ -76,11 +89,26 @@ pub fn spawn_council_handler(
             let bcast_c   = bcast.clone();
 
             // butt_in channel — gateway can inject human messages mid-council
-            // (capacity 4; unread messages accumulate until next round checks them)
-            let (_butt_in_tx, butt_in_rx) = mpsc::channel::<String>(4);
+            let (butt_in_tx, butt_in_rx) = mpsc::channel::<String>(4);
+
+            // Register this council in the shared maps before spawning
+            butt_in_map.lock().await.insert(council_id.clone(), butt_in_tx);
+            let record = CouncilRecord {
+                id:        council_id.clone(),
+                topic:     topic.clone(),
+                agents:    agent_defs.clone(),
+                status:    "running".into(),
+                rounds:    0,
+                synthesis: String::new(),
+            };
+            sessions.lock().await.push(record);
 
             let default_backend = backend_arc.read().await.clone();
             let default_model   = model_arc.read().await.clone();
+
+            let cid_done   = council_id.clone();
+            let butt_map_c = Arc::clone(&butt_in_map);
+            let sessions_c = Arc::clone(&sessions);
 
             tokio::spawn(async move {
                 let synthesis = run_council(
@@ -94,19 +122,36 @@ pub fn spawn_council_handler(
                     oai_url,
                     default_backend,
                     default_model,
-                    bus_c.clone(),  // _bus arg
+                    bus_c.clone(),
                     bcast_c,
                     butt_in_rx,
                 ).await;
 
-                bus_c.emit(Event::ToolResult {
-                    session,
-                    call: call_id,
-                    output: ToolOutput {
-                        ok:      true,
-                        content: serde_json::json!(synthesis),
-                    },
-                }).await;
+                // Clean up butt-in entry
+                butt_map_c.lock().await.remove(&cid_done);
+
+                // Update session record to complete
+                let mut sess = sessions_c.lock().await;
+                if let Some(r) = sess.iter_mut().find(|r| r.id == cid_done) {
+                    r.status    = "complete".into();
+                    r.synthesis = synthesis.clone();
+                    // rounds is updated below via CouncilComplete event on bus;
+                    // here we set a minimum of 1 if we got a synthesis
+                    if r.rounds == 0 { r.rounds = 1; }
+                }
+                drop(sess);
+
+                // Only emit ToolResult for agent-originated calls (not gateway sentinel)
+                if session.0 != u64::MAX {
+                    bus_c.emit(Event::ToolResult {
+                        session,
+                        call: call_id,
+                        output: ToolOutput {
+                            ok:      true,
+                            content: serde_json::json!(synthesis),
+                        },
+                    }).await;
+                }
             });
         }
     });
@@ -114,10 +159,9 @@ pub fn spawn_council_handler(
 
 fn parse_agent_def(v: &serde_json::Value) -> Option<CouncilAgentDef> {
     if let Some(id) = v.as_str() {
-        // Native shorthand: "AZOTH" → use native persona (council.rs resolves it)
         return Some(CouncilAgentDef {
             id:      id.to_owned(),
-            persona: String::new(),  // empty → council engine uses native_persona()
+            persona: String::new(),
             backend: None,
             model:   None,
             color:   None,

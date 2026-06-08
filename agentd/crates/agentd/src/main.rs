@@ -170,6 +170,13 @@ async fn main() -> anyhow::Result<()> {
     // the turn engine below.
     let (soul_path, soul_content) = load_soul();
 
+    // Council shared state — created early so GatewayState can hold Arc clones.
+    let council_butt_in:  apexos_gateway::CouncilButtInMap   = Arc::new(Mutex::new(HashMap::new()));
+    let council_sessions: apexos_gateway::CouncilSessionsMap = Arc::new(Mutex::new(Vec::new()));
+    let council_next_id   = Arc::new(AtomicU64::new(1));
+    let (council_tx, council_rx) = mpsc::channel::<(SessionId, ActionId, serde_json::Value)>(8);
+    let council_start_tx  = council_tx.clone();
+
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
         bus:                  handle.clone(),
@@ -189,6 +196,10 @@ async fn main() -> anyhow::Result<()> {
         sensor_bridge_token:  sensor_bridge_token,
         soul_path:            soul_path.clone(),
         policy_arc:           Arc::clone(&policy_arc),
+        council_start_tx,
+        council_butt_in:      Arc::clone(&council_butt_in),
+        council_sessions:     Arc::clone(&council_sessions),
+        council_next_id:      Arc::clone(&council_next_id),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -290,8 +301,7 @@ async fn main() -> anyhow::Result<()> {
     spawn_scheduler_handler(Arc::clone(&scheduler_state), schedules_path.clone(), handle.clone(), sched_rx);
     tokio::spawn(run_scheduler(Arc::clone(&scheduler_state), handle.clone(), schedules_path, root_session));
 
-    // Council handler — receives convene_council tool calls, runs CouncilEngine.
-    let (council_tx, council_rx) = mpsc::channel::<(SessionId, ActionId, serde_json::Value)>(8);
+    // Council handler — wire supervisor channel and spawn handler.
     if sv_cmd_tx.send(SupervisorCmd::SetCouncilTx { tx: council_tx }).await.is_err() {
         eprintln!("[agentd] warning: failed to wire council channel");
     }
@@ -304,6 +314,8 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&oai_base_url_arc),
         Arc::clone(&backend_arc),
         Arc::clone(&model_arc),
+        Arc::clone(&council_butt_in),
+        Arc::clone(&council_sessions),
     );
 
     // Subscribe before supervisor so no early PluginUp events are missed.

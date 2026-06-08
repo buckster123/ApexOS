@@ -1,13 +1,14 @@
 use axum::{
     Json, Router,
     extract::{
-        Query, State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use serde::{Deserialize, Serialize};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -15,9 +16,25 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
-use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
+use apexos_core::{ActionId, BusHandle, Event, Message as CoreMessage, SessionId};
 use apexos_plugins::{PolicyEngine, Rule};
 use tokio::sync::mpsc;
+
+/// Lightweight record of a council session, served by `GET /api/council[/:id]`.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CouncilRecord {
+    pub id:        String,
+    pub topic:     String,
+    pub agents:    Vec<apexos_core::CouncilAgentDef>,
+    pub status:    String,   // "running" | "complete"
+    pub rounds:    u32,
+    pub synthesis: String,
+}
+
+/// Map council_id → live butt-in sender. Entry removed when council completes.
+pub type CouncilButtInMap  = Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>;
+/// Ordered list of all sessions (running + complete) for this daemon run.
+pub type CouncilSessionsMap = Arc<Mutex<Vec<CouncilRecord>>>;
 
 #[derive(Clone)]
 pub struct GatewayState {
@@ -44,6 +61,14 @@ pub struct GatewayState {
     pub sensor_bridge_token:   Arc<String>,
     pub soul_path:             PathBuf,
     pub policy_arc:            Arc<RwLock<PolicyEngine>>,
+    /// Council: start a new council session (shared with supervisor for agent-tool calls)
+    pub council_start_tx:  mpsc::Sender<(SessionId, ActionId, serde_json::Value)>,
+    /// Council: live butt-in senders, keyed by council_id
+    pub council_butt_in:   CouncilButtInMap,
+    /// Council: session records for listing/detail
+    pub council_sessions:  CouncilSessionsMap,
+    /// Council: counter for gateway-initiated council IDs (prefix "gw")
+    pub council_next_id:   Arc<std::sync::atomic::AtomicU64>,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -72,6 +97,9 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/record/stop",        post(record_stop_handler))
         .route("/api/wake",               post(wake_handler))
         .route("/api/speak",              post(speak_handler))
+        .route("/api/council",               get(council_list_handler).post(council_start_handler))
+        .route("/api/council/{id}",          get(council_detail_handler))
+        .route("/api/council/{id}/butt-in",  post(council_butt_in_handler))
         .route("/terminal-ws",            get(terminal_ws_handler))
         .fallback(static_handler)
         .with_state(state)
@@ -1173,6 +1201,74 @@ async fn handle_terminal_ws(socket: WebSocket) {
     tokio::select! { _ = ws_write => {} _ = ws_read => {} }
     let _ = child.kill();
     eprintln!("[terminal] session closed");
+}
+
+// ── Council ───────────────────────────────────────────────────────────────────
+
+/// POST /api/council — start a new council session from the UI.
+/// Body: { topic, agents, max_rounds?, consensus_threshold? }
+async fn council_start_handler(
+    State(state): State<GatewayState>,
+    Json(mut body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let id = format!("gw{}", state.council_next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    body["council_id"] = serde_json::json!(id);
+    // Use sentinel session/call so no spurious ToolResult lands on an agent turn
+    let session = apexos_core::SessionId(u64::MAX);
+    let call_id = apexos_core::ActionId(u64::MAX);
+    if state.council_start_tx.send((session, call_id, body)).await.is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "council handler unavailable"}))).into_response();
+    }
+    Json(serde_json::json!({"council_id": id})).into_response()
+}
+
+/// GET /api/council — list all council sessions (running + complete).
+async fn council_list_handler(
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    let sessions = state.council_sessions.lock().await;
+    Json(sessions.clone()).into_response()
+}
+
+/// GET /api/council/:id — detail for a single council session.
+async fn council_detail_handler(
+    State(state): State<GatewayState>,
+    Path(id):     Path<String>,
+) -> impl IntoResponse {
+    let sessions = state.council_sessions.lock().await;
+    match sessions.iter().find(|r| r.id == id) {
+        Some(r) => Json(r.clone()).into_response(),
+        None    => (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "council not found"}))).into_response(),
+    }
+}
+
+/// POST /api/council/:id/butt-in — inject a human message into a running council.
+/// Body: { message: "..." }
+async fn council_butt_in_handler(
+    State(state): State<GatewayState>,
+    Path(id):     Path<String>,
+    Json(body):   Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let msg = body["message"].as_str().unwrap_or("").to_owned();
+    if msg.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "message required"}))).into_response();
+    }
+    let map = state.council_butt_in.lock().await;
+    match map.get(&id) {
+        Some(tx) => {
+            if tx.send(msg).await.is_ok() {
+                Json(serde_json::json!({"ok": true})).into_response()
+            } else {
+                (StatusCode::GONE,
+                    Json(serde_json::json!({"error": "council channel closed"}))).into_response()
+            }
+        }
+        None => (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "council not active or not found"}))).into_response(),
+    }
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

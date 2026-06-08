@@ -104,6 +104,7 @@
       <button class="sm-item" onclick="launchApp('explorer')"><span class="sm-emoji">📁</span>Explorer</button>
       <button class="sm-item" onclick="launchApp('ide')"><span class="sm-emoji">🖥</span>IDE</button>
       <button class="sm-item" onclick="launchApp('player')"><span class="sm-emoji">🎵</span>Player</button>
+      <button class="sm-item" onclick="launchApp('council')"><span class="sm-emoji">⚗</span>Council</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -483,6 +484,31 @@
       <div id="evo-content"></div>
     </div>
   </div>
+  <!-- Council Launcher window -->
+  <div id="win-council-content" class="win-content council-launcher-win" style="display:none">
+    <div class="cl-section">
+      <label class="cl-label">Topic</label>
+      <input id="cl-topic" class="cl-input" type="text" placeholder="What should the council deliberate on?">
+    </div>
+    <div class="cl-section">
+      <label class="cl-label">Agents</label>
+      <div class="cl-agents">
+        <label class="cl-agent-check"><input type="checkbox" name="cl-agent" value="AZOTH" checked><span class="cl-agent-dot" style="background:#ffd700"></span>AZOTH</label>
+        <label class="cl-agent-check"><input type="checkbox" name="cl-agent" value="VAJRA" checked><span class="cl-agent-dot" style="background:#4fc3f7"></span>VAJRA</label>
+        <label class="cl-agent-check"><input type="checkbox" name="cl-agent" value="ELYSIAN" checked><span class="cl-agent-dot" style="background:#e8b4ff"></span>ELYSIAN</label>
+        <label class="cl-agent-check"><input type="checkbox" name="cl-agent" value="KETHER" checked><span class="cl-agent-dot" style="background:#9b59b6"></span>KETHER</label>
+      </div>
+    </div>
+    <div class="cl-section cl-row">
+      <label class="cl-label">Rounds</label>
+      <input id="cl-rounds" class="cl-input cl-short" type="number" value="3" min="1" max="10">
+      <label class="cl-label">Threshold</label>
+      <input id="cl-threshold" class="cl-input cl-short" type="number" value="0.7" min="0.1" max="1.0" step="0.1">
+    </div>
+    <button id="cl-convene-btn" class="cl-convene-btn" onclick="conveneCouncil()">⚗ CONVENE</button>
+    <div id="cl-status" class="cl-status"></div>
+  </div>
+
   <div id="sessions-modal" class="hidden">
     <div id="sessions-modal-inner">
       <div id="sessions-modal-header"><span>SESSIONS</span><button id="sessions-close-btn">✕</button></div>

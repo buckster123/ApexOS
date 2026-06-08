@@ -133,6 +133,11 @@ const WIN_DEFAULTS = {
     x: 160, y: 60, width: 780, height: 520,
     background: 'var(--wb-bg)',
   },
+  council: {
+    title: '⚗ Council',
+    x: 160, y: 70, width: 600, height: 440,
+    background: 'var(--wb-bg)',
+  },
   ide: {
     title: '🖥 IDE',
     x: 60, y: 50, width: 900, height: 620,
@@ -1637,3 +1642,211 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+// ─── Council launcher (static window → POST /api/council) ─────────────────
+
+window.conveneCouncil = async function() {
+  const topicEl = document.getElementById('cl-topic');
+  const topic = topicEl ? topicEl.value.trim() : '';
+  if (!topic) { topicEl && topicEl.focus(); return; }
+
+  const checked = [...document.querySelectorAll('input[name="cl-agent"]:checked')];
+  const agents  = checked.map(c => c.value);
+  if (!agents.length) { alert('Select at least one agent.'); return; }
+
+  const maxRounds = parseInt(document.getElementById('cl-rounds')?.value || '3') || 3;
+  const threshold = parseFloat(document.getElementById('cl-threshold')?.value || '0.7') || 0.7;
+
+  const btn    = document.getElementById('cl-convene-btn');
+  const status = document.getElementById('cl-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Convening...'; }
+  if (status) status.textContent = '';
+
+  try {
+    const r = await fetch('/api/council', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({ topic, agents, max_rounds: maxRounds, consensus_threshold: threshold }),
+    });
+    const d = await r.json();
+    if (d.council_id) {
+      if (status) status.textContent = 'Council ' + d.council_id + ' started — watch for new window';
+    } else {
+      if (status) status.textContent = d.error || 'Error starting council';
+    }
+  } catch(e) {
+    if (status) status.textContent = 'Network error: ' + e.message;
+  }
+
+  if (btn) {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = '⚗ CONVENE';
+      if (status) status.textContent = '';
+      if (topicEl) topicEl.value = '';
+    }, 4000);
+  }
+};
+
+// ─── Council Chamber (dynamic WinBox per council session) ─────────────────
+
+window.openCouncilWin = function(ev) {
+  const cid    = ev.council_id;
+  const topic  = ev.topic || 'Council';
+  const agents = ev.agents || [];
+  const winId  = 'council-' + cid;
+  if (wins[winId]) { wins[winId].focus(); return; }
+
+  const container = document.createElement('div');
+  container.id        = 'win-' + winId + '-content';
+  container.className = 'win-content council-win';
+  container.dataset.councilId = cid;
+
+  // Header: topic + round counter + convergence bar
+  const header = document.createElement('div');
+  header.className = 'council-header';
+  header.innerHTML =
+    '<div class="council-meta">' +
+      '<span class="council-topic">' + topic.slice(0, 80) + '</span>' +
+      '<span class="council-round" id="cround-' + cid + '">Round 0</span>' +
+    '</div>' +
+    '<div class="council-conv-wrap">' +
+      '<div class="council-conv-bar" id="cconv-' + cid + '" style="width:0%"></div>' +
+    '</div>' +
+    '<span class="council-conv-label" id="cconv-label-' + cid + '">convergence 0%</span>';
+
+  // Agent columns
+  const columns = document.createElement('div');
+  columns.className = 'council-columns';
+  columns.id = 'ccols-' + cid;
+
+  const colCount = agents.length || 1;
+  agents.forEach(function(agent) {
+    const col = document.createElement('div');
+    col.className = 'council-col';
+    col.id = 'ccol-' + cid + '-' + agent.id;
+    const color = agent.color || '#888888';
+    const modelShort = (agent.model || '').split('/').pop().slice(0, 22);
+    col.innerHTML =
+      '<div class="col-hdr">' +
+        '<span class="col-name" style="color:' + color + '">' + agent.id + '</span>' +
+        '<span class="col-model">' + modelShort + '</span>' +
+        '<span class="col-status" id="cstatus-' + cid + '-' + agent.id + '">⟳</span>' +
+      '</div>' +
+      '<div class="col-text" id="ctext-' + cid + '-' + agent.id + '"></div>';
+    columns.appendChild(col);
+  });
+
+  // Footer: synthesis + butt-in input
+  const footer = document.createElement('div');
+  footer.className = 'council-footer';
+  footer.innerHTML =
+    '<div class="council-synthesis" id="csynth-' + cid + '" style="display:none"></div>' +
+    '<div class="council-butt-row">' +
+      '<input type="text" class="council-butt-input" id="cbutt-' + cid + '" placeholder="Butt in to the deliberation..." onkeydown="if(event.key===\'Enter\')councilButtIn(\'' + cid + '\')">' +
+      '<button class="council-butt-btn" onclick="councilButtIn(\'' + cid + '\')">SEND</button>' +
+    '</div>';
+
+  container.append(header, columns, footer);
+  document.body.appendChild(container);
+
+  const titleShort = topic.slice(0, 36) + (topic.length > 36 ? '…' : '');
+  const winW = Math.min(1400, Math.max(560, colCount * 280 + 40));
+
+  wins[winId] = new WinBox('⚗ ' + titleShort, {
+    x: 80, y: 56, width: winW, height: 580,
+    background: 'var(--wb-bg)',
+    class: 'wb-apexos wb-council',
+    mount: container,
+    onclose: function() {
+      container.remove();
+      delete wins[winId];
+      removeTaskbarTab(winId);
+      return false;
+    },
+  });
+  addTaskbarTab(winId, '⚗ ' + titleShort.slice(0, 16), wins[winId]);
+};
+
+window.onCouncilStarted = function(ev) {
+  if (typeof window.openCouncilWin === 'function') window.openCouncilWin(ev);
+};
+
+window.onCouncilRoundStart = function(ev) {
+  const cid = ev.council_id;
+  const roundEl = document.getElementById('cround-' + cid);
+  if (roundEl) roundEl.textContent = 'Round ' + ev.round;
+  // Add round separator to each agent column (skip on round 1 — columns are empty)
+  if (ev.round > 1) {
+    const cols = document.getElementById('ccols-' + cid);
+    if (cols) cols.querySelectorAll('.col-text').forEach(function(t) {
+      const sep = document.createElement('div');
+      sep.className = 'col-round-sep';
+      sep.textContent = '── Round ' + ev.round + ' ──';
+      t.appendChild(sep);
+    });
+  }
+  // Reset agent statuses to "thinking"
+  const cols2 = document.getElementById('ccols-' + cid);
+  if (cols2) cols2.querySelectorAll('.col-status').forEach(function(s) {
+    s.textContent = '⟳';
+    s.style.color = 'var(--accent2)';
+  });
+};
+
+window.onCouncilAgentDelta = function(ev) {
+  const el = document.getElementById('ctext-' + ev.council_id + '-' + ev.agent_id);
+  if (!el) return;
+  el.textContent += ev.delta;
+  el.scrollTop = el.scrollHeight;
+};
+
+window.onCouncilAgentDone = function(ev) {
+  const el = document.getElementById('cstatus-' + ev.council_id + '-' + ev.agent_id);
+  if (el) { el.textContent = '✓'; el.style.color = 'var(--accent)'; }
+};
+
+window.onCouncilRoundDone = function(ev) {
+  const cid = ev.council_id;
+  const pct  = Math.round((ev.convergence || 0) * 100);
+  const bar  = document.getElementById('cconv-' + cid);
+  const lbl  = document.getElementById('cconv-label-' + cid);
+  if (bar) {
+    bar.style.width      = pct + '%';
+    bar.style.background = pct >= 70 ? 'var(--accent)' : 'var(--accent2)';
+  }
+  if (lbl) lbl.textContent = 'convergence ' + pct + '%';
+};
+
+window.onCouncilComplete = function(ev) {
+  const cid = ev.council_id;
+  const synthEl = document.getElementById('csynth-' + cid);
+  if (synthEl) {
+    synthEl.style.display = '';
+    synthEl.innerHTML =
+      '<strong>SYNTHESIS</strong> <span class="csynth-meta">[' + ev.reason + ', ' + ev.rounds + ' round' + (ev.rounds !== 1 ? 's' : '') + ']</span><br>' +
+      ev.synthesis;
+  }
+  const roundEl = document.getElementById('cround-' + cid);
+  if (roundEl) { roundEl.textContent = 'Complete'; roundEl.style.color = 'var(--accent)'; }
+  // Disable butt-in input
+  const buttEl = document.getElementById('cbutt-' + cid);
+  if (buttEl) { buttEl.disabled = true; buttEl.placeholder = 'Council complete'; }
+};
+
+window.councilButtIn = async function(cid) {
+  const input = document.getElementById('cbutt-' + cid);
+  if (!input) return;
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  try {
+    const r = await fetch('/api/council/' + cid + '/butt-in', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({message: msg}),
+    });
+    const d = await r.json();
+    if (!d.ok) console.warn('[council] butt-in error:', d.error);
+  } catch(e) { console.error('[council] butt-in failed:', e); }
+};

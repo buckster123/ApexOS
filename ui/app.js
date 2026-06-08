@@ -270,6 +270,24 @@ function handleEvent(ev) {
     case 'sub_agent_started':
       if (typeof window.openSubAgentWin === 'function') window.openSubAgentWin(ev);
       break;
+    case 'council_started':
+      if (typeof window.onCouncilStarted === 'function') window.onCouncilStarted(ev);
+      break;
+    case 'council_round_start':
+      if (typeof window.onCouncilRoundStart === 'function') window.onCouncilRoundStart(ev);
+      break;
+    case 'council_agent_delta':
+      if (typeof window.onCouncilAgentDelta === 'function') window.onCouncilAgentDelta(ev);
+      break;
+    case 'council_agent_done':
+      if (typeof window.onCouncilAgentDone === 'function') window.onCouncilAgentDone(ev);
+      break;
+    case 'council_round_done':
+      if (typeof window.onCouncilRoundDone === 'function') window.onCouncilRoundDone(ev);
+      break;
+    case 'council_complete':
+      if (typeof window.onCouncilComplete === 'function') window.onCouncilComplete(ev);
+      break;
     case 'error':               onAgentError(ev);          break;
   }
 }
