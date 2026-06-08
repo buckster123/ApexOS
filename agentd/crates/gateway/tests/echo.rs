@@ -11,17 +11,24 @@ use tokio_tungstenite::connect_async;
 use tungstenite::Message;
 
 fn make_state(handle: apexos_core::BusHandle, bcast: tokio::sync::broadcast::Sender<Event>) -> GatewayState {
+    use apexos_plugins::{PolicyConfig, PolicyEngine};
     GatewayState {
-        bus:             handle,
+        bus:                  handle,
         bcast,
-        api_key:         Arc::new(tokio::sync::RwLock::new(String::new())),
-        model:           Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())),
-        policy_mode:     "SUGGEST".into(),
-        ui_dir:          PathBuf::from("."),
-        events_dir:      PathBuf::from("."),
-        sessions_dir:    PathBuf::from("."),
-        histories:       Arc::new(Mutex::new(HashMap::new())),
-        next_session_id: Arc::new(AtomicU64::new(1)),
+        api_key:              Arc::new(tokio::sync::RwLock::new(String::new())),
+        model:                Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())),
+        backend:              Arc::new("anthropic".into()),
+        oai_base_url:         Arc::new("http://localhost:11434/v1".into()),
+        policy_mode:          Arc::new(tokio::sync::RwLock::new("suggest".into())),
+        policy_set_tx:        tokio::sync::mpsc::channel(1).0,
+        ui_dir:               PathBuf::from("."),
+        events_dir:           PathBuf::from("."),
+        sessions_dir:         PathBuf::from("."),
+        histories:            Arc::new(Mutex::new(HashMap::new())),
+        next_session_id:      Arc::new(AtomicU64::new(1)),
+        sensor_bridge_token:  Arc::new(String::new()),
+        soul_path:            PathBuf::from("."),
+        policy_arc:           Arc::new(tokio::sync::RwLock::new(PolicyEngine::new(PolicyConfig::default()))),
     }
 }
 

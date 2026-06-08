@@ -71,6 +71,7 @@ dependencies = [
  "axum",
  "futures-util",
  "libc",
+ "reqwest",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.2",

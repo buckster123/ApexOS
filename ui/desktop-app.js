@@ -1558,8 +1558,23 @@ window.onWakeTriggered = async () => {
   }, WAKE_RECORD_SECS * 1000);
 };
 
+// ─── Backend badge ────────────────────────────────────────────────────────────
+async function initBackendBadge() {
+  try {
+    const data = await fetch('/api/models').then(r => r.json());
+    const badge = document.getElementById('backend-badge');
+    if (!badge) return;
+    const b = (data.backend || 'anthropic').toUpperCase();
+    badge.textContent = b;
+    const localBackends = ['OLLAMA', 'VLLM', 'OAI'];
+    if (localBackends.includes(b)) badge.classList.add('local');
+    else badge.classList.remove('local');
+  } catch {}
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  initBackendBadge();
   // Power modal
   document.getElementById('power-btn')?.addEventListener('click', () => {
     if (typeof showPowerModal === 'function') showPowerModal();

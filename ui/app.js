@@ -2,12 +2,7 @@
 const WS_URL     = `ws://${location.host}/ws`;
 const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000];
 
-const MODELS = [
-  { id: 'claude-opus-4-8',   label: 'OPUS 4.8'    },
-  { id: 'claude-opus-4-7',   label: 'OPUS 4.7'    },
-  { id: 'claude-sonnet-4-6', label: 'SONNET 4.6'  },
-  { id: 'claude-haiku-4-5',  label: 'HAIKU 4.5'   },
-];
+// MODELS is populated dynamically from /api/models — no hardcoded list needed.
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let SESSION_ID   = null;   // assigned by server via session_init
@@ -769,12 +764,29 @@ function triggerPower(action) {
 }
 
 // ─── Model selector ───────────────────────────────────────────────────────────
+let _modelSelInit = false;
 async function initModelSelector(currentModel) {
   const sel = document.getElementById('model-select');
+  if (!sel) return;
+
+  // Fetch available models from the active backend
+  try {
+    const res  = await fetch('/api/models');
+    const data = await res.json();
+    const models = data.models || [];
+    if (models.length) {
+      sel.innerHTML = models.map(m => {
+        const id  = (m.id   || '').replace(/</g, '&lt;');
+        const lbl = (m.name || m.id || '').toUpperCase().replace(/</g, '&lt;');
+        return `<option value="${id}">${lbl}</option>`;
+      }).join('');
+    }
+  } catch { /* keep static fallback options */ }
+
+  // Set current selection, inserting an option if the model isn't in the list
   if (currentModel) {
-    // Set selector to match server-reported model; add unknown model if needed
-    const known = MODELS.find(m => m.id === currentModel);
-    if (!known) {
+    const exists = Array.from(sel.options).some(o => o.value === currentModel);
+    if (!exists) {
       const opt = document.createElement('option');
       opt.value = currentModel;
       opt.textContent = currentModel.toUpperCase();
@@ -783,16 +795,19 @@ async function initModelSelector(currentModel) {
     sel.value = currentModel;
   }
 
-  sel.addEventListener('change', async () => {
-    const model = sel.value;
-    try {
-      await fetch('/api/model', {
-        method:  'POST',
-        headers: { 'content-type': 'application/json' },
-        body:    JSON.stringify({ model }),
-      });
-    } catch { /* offline */ }
-  });
+  // Attach change listener once
+  if (!_modelSelInit) {
+    _modelSelInit = true;
+    sel.addEventListener('change', async () => {
+      try {
+        await fetch('/api/model', {
+          method:  'POST',
+          headers: { 'content-type': 'application/json' },
+          body:    JSON.stringify({ model: sel.value }),
+        });
+      } catch { /* offline */ }
+    });
+  }
 }
 
 // ─── Sending prompts ──────────────────────────────────────────────────────────

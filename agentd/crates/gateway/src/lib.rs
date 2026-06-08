@@ -25,6 +25,10 @@ pub struct GatewayState {
     pub bcast:                 broadcast::Sender<Event>,
     pub api_key:               Arc<RwLock<String>>,
     pub model:                 Arc<RwLock<String>>,
+    /// Active inference backend: "anthropic" | "ollama" | "vllm" | "openrouter"
+    pub backend:               Arc<String>,
+    /// Base URL for OAI-compatible backends (e.g. "http://localhost:11434/v1")
+    pub oai_base_url:          Arc<String>,
     pub policy_mode:           Arc<RwLock<String>>,
     /// Send a mode string ("suggest" | "auto-edit" | "yolo") to live-update the PolicyEngine.
     pub policy_set_tx:         mpsc::Sender<String>,
@@ -46,6 +50,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/status",      get(status_handler))
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
+        .route("/api/models",   get(get_models_handler))
         .route("/api/policy",         post(set_policy_handler))
         .route("/api/policy/rules",   get(get_policy_rules_handler))
         .route("/api/soul",     get(get_soul_handler).post(set_soul_handler))
@@ -313,6 +318,66 @@ async fn set_key_handler(
 async fn get_model_handler(State(state): State<GatewayState>) -> impl IntoResponse {
     let model = state.model.read().await.clone();
     Json(serde_json::json!({ "model": model }))
+}
+
+/// Returns available models for the active backend.
+/// For Anthropic: static list. For OAI backends: proxies to {base_url}/models.
+async fn get_models_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let current = state.model.read().await.clone();
+    let backend = state.backend.as_str();
+
+    if backend == "anthropic" {
+        return Json(serde_json::json!({
+            "backend": backend,
+            "current": current,
+            "models": [
+                { "id": "claude-sonnet-4-6", "name": "Sonnet 4.6" },
+                { "id": "claude-opus-4-8",   "name": "Opus 4.8"   },
+                { "id": "claude-opus-4-7",   "name": "Opus 4.7"   },
+                { "id": "claude-haiku-4-5",  "name": "Haiku 4.5"  },
+            ]
+        }));
+    }
+
+    // OAI-compatible backend: query {base_url}/models for live model list
+    let models_url = format!("{}/models", state.oai_base_url.trim_end_matches('/'));
+    let api_key = state.api_key.read().await.clone();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap_or_default();
+
+    let mut req = client.get(&models_url);
+    if !api_key.is_empty() {
+        req = req.header("authorization", format!("Bearer {api_key}"));
+    }
+
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                let models: Vec<serde_json::Value> = body["data"]
+                    .as_array()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .filter_map(|m| m["id"].as_str())
+                    .map(|id| serde_json::json!({ "id": id, "name": id }))
+                    .collect();
+                return Json(serde_json::json!({
+                    "backend": backend,
+                    "current": current,
+                    "models":  models,
+                }));
+            }
+        }
+        _ => {}
+    }
+
+    // Fallback: return just the current model
+    Json(serde_json::json!({
+        "backend": backend,
+        "current": current,
+        "models": [{ "id": current, "name": current }],
+    }))
 }
 
 async fn set_model_handler(

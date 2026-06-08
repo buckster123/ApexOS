@@ -97,6 +97,14 @@ html, body {
 #topbar-center { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: center; }
 #topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
+.backend-badge {
+  font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .06em;
+  padding: 2px 7px; height: 20px; line-height: 16px;
+  border-radius: var(--radius-sm); border: 1px solid rgba(108,138,255,0.3);
+  background: rgba(108,138,255,0.1); color: rgba(108,138,255,0.85);
+  white-space: nowrap; cursor: default;
+}
+.backend-badge.local { border-color: rgba(32,200,120,0.35); background: rgba(32,200,120,0.1); color: rgba(32,200,120,0.9); }
 #model-select, .policy-select {
   background: rgba(255,255,255,0.04); color: var(--text-dim);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
