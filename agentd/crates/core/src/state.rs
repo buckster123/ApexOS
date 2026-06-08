@@ -74,8 +74,9 @@ impl SystemState {
                 self.plugins.remove(plugin);
             }
 
-            // Routing signal handled by the async layer; state just records intent.
-            Event::SpawnAgent { .. } => {}
+            // Routing signals handled by the async layer; state is a no-op.
+            Event::SpawnAgent      { .. } => {}
+            Event::SubAgentStarted { .. } => {}
 
             Event::SensorReading { .. } => {}
 
