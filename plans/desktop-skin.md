@@ -41,7 +41,7 @@ ui/
 | `notes`      | textarea + localStorage| ✓ Phase D | Auto-save + server persist           |
 | `sketchpad`  | HTML5 canvas          | ✓ Phase D | Pen/eraser/colour, Download PNG      |
 | `browser`    | iframe + URL bar      | ✓ Phase D | Local dashboards, back button        |
-| `ide`        | Monaco editor         | Phase C   | File browser + read/write via tools  |
+| `ide`        | Monaco editor         | ✓ Phase C | New/Upload/Open/Save, Ctrl+S, lang auto-detect |
 | `sub-agent`  | Second chat panel     | Phase C   | Spawned by agent_spawn virtual tool  |
 
 ## API routes added (gateway)
@@ -116,10 +116,14 @@ so gateway stays decoupled from the policy crate.
 - [x] Persisted in localStorage, restored at boot in `transitionToApp()`
 - [ ] Dark/light theme toggle (deferred — needs full CSS var override pass)
 
-**IDE window** (remaining)
-- Monaco editor (bundle via `ui/lib/monaco/`, ~2MB) — needs its own session
-- File browser panel: `list_dir` tool → tree view, click to `read_file` into editor
-- Save button → `write_file` tool
+**IDE window** ✓ DONE
+- Monaco 0.55.1 downloaded as tarball (no npm), bundled in `ui/lib/monaco/vs/` (~16MB)
+- Toolbar: `+ New`, `⬆ Upload`, path input, Open, lang badge, `💾 Save`
+- `automaticLayout: true` — resizes with WinBox drag
+- Ctrl+S saves via `printf '%s'` to server path
+- Language auto-detected from extension (Rust, Python, JS/TS, JSON, YAML, Shell, Go, Markdown, +30 more)
+- Explorer `🖥 IDE` button pre-populates `window.ideFile` — file opens with lang set
+- Upload reads local file as text into editor; Save writes it to workspace path
 
 **Sub-agent window** (remaining)
 - `agent_spawn` virtual tool → bus emits `SubAgentStarted { session_id }`
@@ -144,9 +148,10 @@ so gateway stays decoupled from the policy crate.
 - [x] sandbox: allow-scripts/same-origin/forms/popups
 - [x] Default URL `localhost:8080` (SensorHead); good for any local dashboard
 
-**File explorer window** (remaining)
-- `win-explorer-content`: sidebar tree (via `list_dir` tool) + main pane (file preview)
-- Click directory → expand subtree; click file → preview or open in Notes/IDE
+**File explorer window** ✓ DONE
+- Two-pane: lazy-expanding tree on left (via `find -printf`), preview on right (head -120 lines)
+- Toolbar: ↺ Refresh, + Dir, ⬆ Upload (base64 write), 🗑 Delete
+- Preview actions: 📝 Notes (load into notes editor), 🖥 IDE (pre-populates `window.ideFile`)
 
 ---
 
