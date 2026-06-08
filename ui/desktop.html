@@ -90,6 +90,8 @@
       <button class="sm-item" onclick="launchApp('cerebro')"><span class="sm-emoji">🧠</span>Cerebro</button>
       <button class="sm-item" onclick="launchApp('sensorhead')"><span class="sm-emoji">👁</span>Sensor Head</button>
       <button class="sm-item" onclick="launchApp('camera')"><span class="sm-emoji">📷</span>Camera</button>
+      <button class="sm-item" onclick="launchApp('notes')"><span class="sm-emoji">📝</span>Notes</button>
+      <button class="sm-item" onclick="launchApp('browser')"><span class="sm-emoji">🌐</span>Browser</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -170,12 +172,34 @@
     <iframe id="sensorhead-iframe" frameborder="0" allow="same-origin"></iframe>
   </div>
 
+  <!-- Notes window -->
+  <div id="win-notes-content" class="win-content notes-win" style="display:none">
+    <div class="notes-toolbar">
+      <input id="notes-filename" class="notes-filename" value="scratch.md" spellcheck="false">
+      <button class="notes-btn" onclick="notesSave()">💾 Save</button>
+      <span id="notes-status" class="notes-status"></span>
+    </div>
+    <textarea id="notes-editor" class="notes-editor" spellcheck="false" placeholder="// start typing…"></textarea>
+  </div>
+
+  <!-- Browser window -->
+  <div id="win-browser-content" class="win-content browser-win" style="display:none">
+    <div class="browser-bar">
+      <button class="browser-btn" onclick="browserBack()">◀</button>
+      <input id="browser-url" class="browser-url" value="http://localhost:8080"
+             spellcheck="false" onkeydown="if(event.key==='Enter') browserGo()">
+      <button class="browser-btn go-btn" onclick="browserGo()">GO</button>
+    </div>
+    <iframe id="browser-iframe" class="browser-iframe" frameborder="0" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+  </div>
+
   <!-- Settings window (Alpine) -->
   <div id="win-settings-content" class="win-content settings-win" style="display:none" x-data="settingsApp()">
     <div class="settings-nav">
       <button :class="tab==='soul' && 'active'" @click="tab='soul'">Soul</button>
       <button :class="tab==='policy' && 'active'" @click="tab='policy'">Policy</button>
       <button :class="tab==='plugins' && 'active'" @click="tab='plugins'">Plugins</button>
+      <button :class="tab==='desktop' && 'active'" @click="tab='desktop'">Desktop</button>
     </div>
 
     <!-- Soul.md editor -->
@@ -224,6 +248,22 @@
             <span class="plugin-count" x-text="count + ' tools'"></span>
           </div>
         </template>
+      </div>
+    </div>
+
+    <!-- Desktop / Appearance -->
+    <div class="settings-pane" x-show="tab==='desktop'">
+      <div class="settings-desc">Wallpaper style — persisted in localStorage.</div>
+      <div class="wp-picker">
+        <button class="wp-btn" :class="wallpaper==='thermal' && 'active'" @click="setWallpaper('thermal')">
+          <span class="wp-icon">🌡</span>Thermal
+        </button>
+        <button class="wp-btn" :class="wallpaper==='logo' && 'active'" @click="setWallpaper('logo')">
+          <span class="wp-icon">⬡</span>Logo
+        </button>
+        <button class="wp-btn" :class="wallpaper==='minimal' && 'active'" @click="setWallpaper('minimal')">
+          <span class="wp-icon">▪</span>Minimal
+        </button>
       </div>
     </div>
   </div>

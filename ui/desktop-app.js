@@ -113,6 +113,16 @@ const WIN_DEFAULTS = {
     x: 180, y: 60, width: 680, height: 520,
     background: '#0d0f18',
   },
+  notes: {
+    title: '📝 Notes',
+    x: 160, y: 70, width: 580, height: 480,
+    background: 'var(--wb-bg)',
+  },
+  browser: {
+    title: '🌐 Browser',
+    x: 100, y: 50, width: 900, height: 620,
+    background: '#fff',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -170,8 +180,8 @@ function openWin(id) {
 
   content.style.display = '';
 
-  // Terminal: defer init until WinBox has laid out the element
   if (id === 'terminal') setTimeout(initTerminal, 60);
+  if (id === 'notes')    setTimeout(notesInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -225,6 +235,7 @@ window.transitionToApp = async function() {
   if (wl) wl.textContent = WALLPAPER_LOGO;
 
   startClock();
+  applyWallpaper(localStorage.getItem('apexos_wallpaper') || 'thermal');
 
   // Enable the chat input (app.js's enableInput is a function declaration → window)
   if (typeof enableInput === 'function' && ws?.readyState === WebSocket.OPEN) {
@@ -343,6 +354,73 @@ async function termExec(cmd) {
   } catch (e) { return { ok: false, error: String(e) }; }
 }
 
+// ─── Wallpaper ────────────────────────────────────────────────────────────────
+function applyWallpaper(mode) {
+  const canvas = document.getElementById('thermal-canvas');
+  const logo   = document.getElementById('wallpaper-logo');
+  if (mode === 'thermal') {
+    if (canvas) canvas.style.display = '';
+    if (logo)   logo.style.opacity   = '1';
+  } else if (mode === 'logo') {
+    if (canvas) canvas.style.display = 'none';
+    if (logo) { logo.style.opacity = '1'; logo.style.color = 'rgba(57,255,20,0.12)'; }
+  } else {  // minimal
+    if (canvas) canvas.style.display = 'none';
+    if (logo)   logo.style.opacity   = '0';
+  }
+}
+
+// ─── Notes window ─────────────────────────────────────────────────────────────
+function notesInit() {
+  const ed = document.getElementById('notes-editor');
+  if (!ed) return;
+  const key = 'apexos_note_' + (document.getElementById('notes-filename')?.value || 'scratch.md');
+  ed.value = localStorage.getItem(key) || '';
+  ed.oninput = () => {
+    localStorage.setItem('apexos_note_' + (document.getElementById('notes-filename')?.value || 'scratch.md'), ed.value);
+    const st = document.getElementById('notes-status');
+    if (st) { st.textContent = 'saved'; clearTimeout(st._t); st._t = setTimeout(() => st.textContent = '', 1500); }
+  };
+}
+
+async function notesSave() {
+  const ed  = document.getElementById('notes-editor');
+  const fn  = document.getElementById('notes-filename')?.value?.trim() || 'scratch.md';
+  const st  = document.getElementById('notes-status');
+  if (!ed) return;
+  localStorage.setItem('apexos_note_' + fn, ed.value);
+  // Also persist to server workspace
+  const path = `/var/lib/agentd/workspace/${fn}`;
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `mkdir -p /var/lib/agentd/workspace && cat > ${path}` }),
+    });
+    // /api/run doesn't support stdin — use tee via echo workaround
+    const escaped = ed.value.replace(/'/g, "'\\''");
+    await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `printf '%s' '${escaped}' > ${path}` }),
+    });
+    if (st) { st.textContent = `✓ ${fn}`; clearTimeout(st._t); st._t = setTimeout(() => st.textContent = '', 2500); }
+  } catch { if (st) st.textContent = '(local only)'; }
+}
+
+// ─── Browser window ───────────────────────────────────────────────────────────
+function browserGo() {
+  const input = document.getElementById('browser-url');
+  const frame = document.getElementById('browser-iframe');
+  if (!input || !frame) return;
+  let url = input.value.trim();
+  if (url && !url.startsWith('http')) url = 'http://' + url;
+  frame.src = url;
+}
+
+function browserBack() {
+  const frame = document.getElementById('browser-iframe');
+  if (frame?.contentWindow) frame.contentWindow.history.back();
+}
+
 // ─── Camera window ───────────────────────────────────────────────────────────
 async function cameraSnap(night = false) {
   const img         = document.getElementById('camera-snapshot');
@@ -393,6 +471,7 @@ function settingsApp() {
     currentMode: 'suggest',
     rules: [],
     plugins: [],
+    wallpaper: localStorage.getItem('apexos_wallpaper') || 'thermal',
 
     async init() {
       // Load soul.md
@@ -440,6 +519,12 @@ function settingsApp() {
         else this.err = d.error;
       } catch (e) { this.err = String(e); }
       this.saving = false;
+    },
+
+    setWallpaper(mode) {
+      this.wallpaper = mode;
+      localStorage.setItem('apexos_wallpaper', mode);
+      applyWallpaper(mode);
     },
 
     async setMode(mode) {

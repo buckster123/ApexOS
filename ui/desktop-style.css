@@ -408,6 +408,65 @@ html, body {
 /* ─── Terminal window ────────────────────────────────────────────────────── */
 .terminal-win { padding: 0; overflow: hidden; background: #0d0f18; }
 
+/* ─── Notes window ──────────────────────────────────────────────────────────── */
+.notes-win { display: flex; flex-direction: column; padding: 0; }
+.notes-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.notes-filename {
+  flex: 1; background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 8px; font: 12px var(--mono);
+}
+.notes-btn {
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border-hi); border-radius: var(--radius-sm);
+  padding: 3px 10px; font: 12px var(--mono); cursor: pointer;
+}
+.notes-btn:hover { background: var(--border-hi); }
+.notes-status { font: 11px var(--mono); color: var(--accent); min-width: 80px; }
+.notes-editor {
+  flex: 1; min-height: 0;
+  background: var(--surface); color: var(--text);
+  border: none; outline: none; resize: none;
+  padding: 14px 16px; font: 13px/1.6 var(--mono);
+}
+
+/* ─── Browser window ─────────────────────────────────────────────────────────── */
+.browser-win { display: flex; flex-direction: column; padding: 0; }
+.browser-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  background: var(--surface); flex-shrink: 0;
+}
+.browser-btn {
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 8px; font: 12px var(--mono); cursor: pointer;
+}
+.browser-btn:hover { background: var(--border-hi); }
+.go-btn { color: var(--accent); border-color: var(--accent); }
+.browser-url {
+  flex: 1; background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 10px; font: 12px var(--mono);
+}
+.browser-iframe { flex: 1; min-height: 0; border: none; background: #fff; }
+
+/* ─── Wallpaper picker (Settings → Desktop) ─────────────────────────────────── */
+.wp-picker { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.wp-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: var(--surface2); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 20px; font: 12px var(--mono); cursor: pointer;
+  transition: all 0.15s;
+}
+.wp-btn:hover { border-color: var(--border-hi); color: var(--text); }
+.wp-btn.active { border-color: var(--accent); color: var(--accent); }
+.wp-icon { font-size: 20px; }
+
 /* ─── Camera window ─────────────────────────────────────────────────────────── */
 .camera-win { display: flex; flex-direction: column; padding: 0; background: #0d0f18; }
 .camera-toolbar {
