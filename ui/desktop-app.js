@@ -1378,19 +1378,56 @@ function homeTimeAgo(ts) {
 
 // ─── Voice Input (STT) + Voice Output (TTS) ──────────────────────────────────
 
-let micRecorder   = null;
-let micChunks     = [];
-let speakerOn     = false;
-let agentTurnText = '';  // accumulates text during current agent turn for TTS
+let micRecorder      = null;
+let micChunks        = [];
+let micServerActive  = false;
+let speakerOn        = false;
+let agentTurnText    = '';  // accumulates text during current agent turn for TTS
 
-function micToggle() {
+// Primary: server-side ALSA recording (works in kiosk without PipeWire/HTTPS)
+// Fallback: browser MediaRecorder (works when remote with HTTPS)
+
+async function micToggle() {
   const btn = document.getElementById('mic-btn');
+  // --- stop server recording ---
+  if (micServerActive) {
+    micServerActive = false;
+    btn.classList.remove('recording');
+    btn.textContent = '⏳';
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/api/record/stop', { method: 'POST' });
+      if (resp.ok) {
+        const { text } = await resp.json();
+        const inp = document.getElementById('prompt-input');
+        if (inp && text && text.trim()) {
+          inp.value = (inp.value ? inp.value + ' ' : '') + text.trim();
+          inp.focus();
+        }
+      }
+    } catch (err) { console.warn('[mic] record/stop error', err); }
+    finally { btn.textContent = '🎤'; btn.disabled = false; }
+    return;
+  }
+  // --- stop browser recording ---
   if (micRecorder && micRecorder.state === 'recording') {
     micRecorder.stop();
     return;
   }
+  // --- start: try server-side first ---
+  try {
+    const resp = await fetch('/api/record/start', { method: 'POST' });
+    if (resp.ok) {
+      micServerActive = true;
+      btn.classList.add('recording');
+      btn.textContent = '⏹';
+      return;
+    }
+  } catch (e) { /* fall through to browser */ }
+
+  // --- fallback: browser MediaRecorder ---
   if (!navigator.mediaDevices) {
-    alert('Microphone not available (HTTPS or localhost required)');
+    alert('Server mic unavailable and browser mic requires HTTPS/localhost');
     return;
   }
   navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
@@ -1400,41 +1437,30 @@ function micToggle() {
     micRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       btn.classList.remove('recording');
-      btn.textContent = '🎤';
-      const blob = new Blob(micChunks, { type: 'audio/webm' });
-      const buf  = await blob.arrayBuffer();
       btn.textContent = '⏳';
       btn.disabled = true;
       try {
+        const blob = new Blob(micChunks, { type: 'audio/webm' });
         const resp = await fetch('/api/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'audio/webm' },
-          body: buf,
+          body: await blob.arrayBuffer(),
         });
         if (resp.ok) {
           const { text } = await resp.json();
           const inp = document.getElementById('prompt-input');
-          if (inp && text) {
+          if (inp && text && text.trim()) {
             inp.value = (inp.value ? inp.value + ' ' : '') + text.trim();
             inp.focus();
           }
-        } else {
-          console.warn('[mic] transcribe error', resp.status);
         }
-      } catch (err) {
-        console.warn('[mic] transcribe fetch error', err);
-      } finally {
-        btn.textContent = '🎤';
-        btn.disabled = false;
-      }
+      } catch (err) { console.warn('[mic] transcribe error', err); }
+      finally { btn.textContent = '🎤'; btn.disabled = false; }
     };
     micRecorder.start();
     btn.classList.add('recording');
     btn.textContent = '⏹';
-  }).catch(err => {
-    console.warn('[mic] getUserMedia error', err);
-    alert('Microphone access denied: ' + err.message);
-  });
+  }).catch(err => { alert('Mic access denied: ' + err.message); });
 }
 
 function speakerToggle() {

@@ -12,7 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use apexos_core::{BusHandle, Event, Message as CoreMessage, SessionId};
@@ -58,6 +58,8 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/sonus/files",        get(sonus_files_handler))
         .route("/api/sonus/stream",       get(sonus_stream_handler))
         .route("/api/transcribe",         post(transcribe_handler))
+        .route("/api/record/start",       post(record_start_handler))
+        .route("/api/record/stop",        post(record_stop_handler))
         .route("/api/speak",              post(speak_handler))
         .route("/terminal-ws",            get(terminal_ws_handler))
         .fallback(static_handler)
@@ -690,6 +692,76 @@ async fn get_policy_rules_handler(State(state): State<GatewayState>) -> impl Int
         }))
         .collect();
     Json(serde_json::json!({ "rules": rules }))
+}
+
+// ── Server-side mic recording (ALSA → whisper, no browser getUserMedia needed) ─
+
+const SERVER_WAV: &str = "/tmp/apex_stt_server.wav";
+
+static SERVER_RECORDER: OnceLock<tokio::sync::Mutex<Option<tokio::process::Child>>> = OnceLock::new();
+
+fn recorder_lock() -> &'static tokio::sync::Mutex<Option<tokio::process::Child>> {
+    SERVER_RECORDER.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+async fn record_start_handler() -> impl IntoResponse {
+    let device = std::env::var("ALSA_CAPTURE_DEVICE")
+        .unwrap_or_else(|_| "plughw:2,0".into());
+
+    // Kill any in-flight recording
+    {
+        let mut guard = recorder_lock().lock().await;
+        if let Some(mut c) = guard.take() { let _ = c.kill().await; }
+    }
+    let _ = tokio::fs::remove_file(SERVER_WAV).await;
+
+    match tokio::process::Command::new("arecord")
+        .args(["-D", &device, "-f", "S16_LE", "-r", "16000", "-c", "1", "-d", "30", SERVER_WAV])
+        .spawn()
+    {
+        Ok(child) => {
+            *recorder_lock().lock().await = Some(child);
+            StatusCode::OK.into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("arecord: {e}")).into_response(),
+    }
+}
+
+async fn record_stop_handler() -> impl IntoResponse {
+    // Stop the recorder
+    {
+        let mut guard = recorder_lock().lock().await;
+        if let Some(mut c) = guard.take() { let _ = c.kill().await; }
+    }
+    // Small yield so arecord flushes its WAV header
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    let model = std::env::var("WHISPER_MODEL")
+        .unwrap_or_else(|_| "/var/lib/agentd/whisper/ggml-tiny.en.bin".into());
+    let bin = std::env::var("WHISPER_BIN")
+        .unwrap_or_else(|_| "/usr/local/bin/whisper-cpp".into());
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::process::Command::new(&bin)
+            .args(["-m", &model, "-f", SERVER_WAV, "-nt", "-l", "en", "--no-prints"])
+            .output(),
+    ).await;
+    let _ = tokio::fs::remove_file(SERVER_WAV).await;
+
+    match result {
+        Ok(Ok(out)) => {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let text = raw.lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && *l != "[BLANK_AUDIO]")
+                .collect::<Vec<_>>()
+                .join(" ");
+            Json(serde_json::json!({ "text": text })).into_response()
+        }
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("whisper: {e}")).into_response(),
+        Err(_)     => (StatusCode::GATEWAY_TIMEOUT, "whisper timed out").into_response(),
+    }
 }
 
 // ── Voice: STT + TTS ─────────────────────────────────────────────────────────
