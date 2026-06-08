@@ -298,6 +298,7 @@ function onAgentText(ev) {
   const t = ensureActiveTurn();
   t.cursor.insertAdjacentText('beforebegin', ev.delta);
   scrollDown();
+  if (typeof window._voiceOnAgentText === 'function') window._voiceOnAgentText(ev.delta);
 }
 
 function onTurnComplete() {
@@ -313,6 +314,7 @@ function onTurnComplete() {
   setCancelVisible(false);
   if (bootDone && ws?.readyState === WebSocket.OPEN) enableInput(true);
   scrollDown();
+  if (typeof window._voiceOnAgentDone === 'function') window._voiceOnAgentDone();
 }
 
 // ─── Tool calls ───────────────────────────────────────────────────────────────

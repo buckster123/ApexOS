@@ -378,6 +378,13 @@ html, body {
 #cancel-btn { background: var(--accent3); }
 #new-session-btn { background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 9px; font-size: 14px; cursor: pointer; }
 #new-session-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+#mic-btn { background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 9px; font-size: 14px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
+#mic-btn:hover { border-color: var(--accent2); }
+#mic-btn.recording { border-color: #e05; box-shadow: 0 0 0 2px #e054; animation: mic-pulse 1s infinite; }
+@keyframes mic-pulse { 0%,100% { box-shadow: 0 0 0 2px #e054; } 50% { box-shadow: 0 0 0 5px #e052; } }
+#speaker-btn { background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 9px; font-size: 14px; cursor: pointer; transition: border-color 0.2s, opacity 0.2s; }
+#speaker-btn:hover { border-color: var(--accent2); }
+#speaker-btn.speaker-off { opacity: 0.35; }
 #shortcuts-bar { padding: 3px 14px 5px; background: var(--surface); color: var(--text-dim); font-size: 10px; font-family: var(--mono); flex-shrink: 0; }
 
 /* ─── Sensors window ──────────────────────────────────────────────────────── */

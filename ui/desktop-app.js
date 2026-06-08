@@ -1376,12 +1376,101 @@ function homeTimeAgo(ts) {
   return `${Math.floor(sec / 86400)}d ago`;
 }
 
+// ─── Voice Input (STT) + Voice Output (TTS) ──────────────────────────────────
+
+let micRecorder   = null;
+let micChunks     = [];
+let speakerOn     = false;
+let agentTurnText = '';  // accumulates text during current agent turn for TTS
+
+function micToggle() {
+  const btn = document.getElementById('mic-btn');
+  if (micRecorder && micRecorder.state === 'recording') {
+    micRecorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices) {
+    alert('Microphone not available (HTTPS or localhost required)');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    micChunks = [];
+    micRecorder = new MediaRecorder(stream);
+    micRecorder.ondataavailable = e => { if (e.data.size > 0) micChunks.push(e.data); };
+    micRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      btn.classList.remove('recording');
+      btn.textContent = '🎤';
+      const blob = new Blob(micChunks, { type: 'audio/webm' });
+      const buf  = await blob.arrayBuffer();
+      btn.textContent = '⏳';
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'audio/webm' },
+          body: buf,
+        });
+        if (resp.ok) {
+          const { text } = await resp.json();
+          const inp = document.getElementById('prompt-input');
+          if (inp && text) {
+            inp.value = (inp.value ? inp.value + ' ' : '') + text.trim();
+            inp.focus();
+          }
+        } else {
+          console.warn('[mic] transcribe error', resp.status);
+        }
+      } catch (err) {
+        console.warn('[mic] transcribe fetch error', err);
+      } finally {
+        btn.textContent = '🎤';
+        btn.disabled = false;
+      }
+    };
+    micRecorder.start();
+    btn.classList.add('recording');
+    btn.textContent = '⏹';
+  }).catch(err => {
+    console.warn('[mic] getUserMedia error', err);
+    alert('Microphone access denied: ' + err.message);
+  });
+}
+
+function speakerToggle() {
+  speakerOn = !speakerOn;
+  const btn = document.getElementById('speaker-btn');
+  if (btn) {
+    btn.classList.toggle('speaker-off', !speakerOn);
+    btn.title = speakerOn ? 'Agent voice output: ON' : 'Agent voice output: OFF';
+  }
+}
+
+function speakText(text) {
+  if (!speakerOn || !text || !text.trim()) return;
+  fetch('/api/speak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).catch(() => {});
+}
+
+// Called from app.js event stream — accumulate agent text during a turn
+window._voiceOnAgentText = (text) => { agentTurnText += text; };
+window._voiceOnAgentDone = () => {
+  if (agentTurnText.trim()) speakText(agentTurnText.trim());
+  agentTurnText = '';
+};
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Power modal
   document.getElementById('power-btn')?.addEventListener('click', () => {
     if (typeof showPowerModal === 'function') showPowerModal();
   });
+  // Mic + speaker buttons
+  document.getElementById('mic-btn')?.addEventListener('click', micToggle);
+  document.getElementById('speaker-btn')?.addEventListener('click', speakerToggle);
   // Evo badge click
   document.getElementById('hdr-evo')?.addEventListener('click', () => {
     if (typeof showEvoModal === 'function') showEvoModal();

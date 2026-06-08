@@ -57,6 +57,8 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/snapshot",           get(snapshot_handler))
         .route("/api/sonus/files",        get(sonus_files_handler))
         .route("/api/sonus/stream",       get(sonus_stream_handler))
+        .route("/api/transcribe",         post(transcribe_handler))
+        .route("/api/speak",              post(speak_handler))
         .route("/terminal-ws",            get(terminal_ws_handler))
         .fallback(static_handler)
         .with_state(state)
@@ -688,6 +690,105 @@ async fn get_policy_rules_handler(State(state): State<GatewayState>) -> impl Int
         }))
         .collect();
     Json(serde_json::json!({ "rules": rules }))
+}
+
+// ── Voice: STT + TTS ─────────────────────────────────────────────────────────
+
+async fn transcribe_handler(body: axum::body::Bytes) -> impl IntoResponse {
+    if body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty audio").into_response();
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros();
+    let tmp_in  = format!("/tmp/apex_stt_{stamp}.webm");
+    let tmp_wav = format!("/tmp/apex_stt_{stamp}.wav");
+
+    if let Err(e) = tokio::fs::write(&tmp_in, &body).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+
+    // Convert to 16kHz mono WAV
+    let ff = tokio::process::Command::new("ffmpeg")
+        .args(["-y", "-i", &tmp_in, "-ar", "16000", "-ac", "1", &tmp_wav])
+        .output().await;
+    let _ = tokio::fs::remove_file(&tmp_in).await;
+    if let Err(e) = ff {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("ffmpeg: {e}")).into_response();
+    }
+    let ff_out = ff.unwrap();
+    if !ff_out.status.success() {
+        let _ = tokio::fs::remove_file(&tmp_wav).await;
+        let stderr = String::from_utf8_lossy(&ff_out.stderr).to_string();
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("ffmpeg failed: {stderr}")).into_response();
+    }
+
+    let model = std::env::var("WHISPER_MODEL")
+        .unwrap_or_else(|_| "/var/lib/agentd/whisper/ggml-tiny.en.bin".into());
+    let bin = std::env::var("WHISPER_BIN")
+        .unwrap_or_else(|_| "/usr/local/bin/whisper-cpp".into());
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::process::Command::new(&bin)
+            .args(["-m", &model, "-f", &tmp_wav, "-nt", "-l", "en", "--no-prints"])
+            .output(),
+    ).await;
+    let _ = tokio::fs::remove_file(&tmp_wav).await;
+
+    match result {
+        Ok(Ok(out)) => {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let text = raw.lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Json(serde_json::json!({ "text": text })).into_response()
+        }
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("whisper: {e}")).into_response(),
+        Err(_)     => (StatusCode::GATEWAY_TIMEOUT, "whisper timed out (30s)").into_response(),
+    }
+}
+
+async fn speak_handler(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let text = match body["text"].as_str() {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    tokio::spawn(async move {
+        if let Ok(model) = std::env::var("PIPER_MODEL") {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros();
+            let wav = format!("/tmp/apex_speak_{stamp}.wav");
+            if let Ok(mut child) = tokio::process::Command::new("piper")
+                .args(["--model", &model, "--output_file", &wav])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = stdin.write_all(text.as_bytes()).await;
+                }
+                let _ = child.wait().await;
+                let _ = tokio::process::Command::new("aplay")
+                    .args(["-q", &wav])
+                    .output().await;
+                let _ = tokio::fs::remove_file(&wav).await;
+            }
+        } else {
+            let _ = tokio::process::Command::new("espeak-ng")
+                .args(["-a", "100", "-s", "150", &text])
+                .output().await;
+        }
+    });
+
+    StatusCode::OK.into_response()
 }
 
 // ── PTY terminal ─────────────────────────────────────────────────────────────

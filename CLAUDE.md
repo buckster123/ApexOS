@@ -52,6 +52,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~22.~~ ✓ Real PTY terminal — `GET /terminal-ws` WebSocket; pure libc `openpty`+`setsid`+`TIOCSCTTY`; two threads bridge blocking PTY I/O to tokio async; binary frames to xterm.js; resize via `TIOCSWINSZ`; full interactive shell (vim, htop, tab-complete, colours); `nix` crate removed, `libc = "0.2"` only
 ~~23.~~ ✓ Sub-agent window v2 — `tool_requested`/`tool_result`/`approval_pending` routed to child WinBox; `toolBlocks: Map` per watched session for DOM lookup by call_id; `textEl` resets on each tool so text+tools interleave; approval buttons send `user_approval` with child session id; frontend-only
 ~~24.~~ ✓ Home/Dashboard — 3-card layout (SYSTEM: CPU temp+RAM+disk bars; ENVIRONMENT: IAQ badge+env stats+thermal mini-canvas; AGENT: model/policy/evo stats/plugin dots) + recent sessions; polls `/api/run` shell cmds every 6s; reuses `sensorState`/`iaqLabel`/`iaqColor` from `app.js`; frontend-only
+~~25.~~ ✓ Voice I/O — STT: `POST /api/transcribe` (raw WebM → ffmpeg 16kHz mono WAV → whisper.cpp → JSON text); TTS: `POST /api/speak` (text → piper if `PIPER_MODEL` set else espeak-ng); 🎤 mic button (MediaRecorder, pulsing red while recording, ⏳ while transcribing) + 🔊 speaker toggle (auto-reads agent turns when on); `deploy/setup-voice.sh` installs ffmpeg+whisper.cpp+tiny.en+piper+lessac-medium on Pi
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
