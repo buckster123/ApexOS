@@ -11,8 +11,9 @@
 # OS
 .DS_Store
 
-# Runtime event log (append-only JSONL, not source)
+# Runtime logs (append-only, not source)
 agentd/events/
+logs/
 
 # Secrets / local config overrides
 *.local.toml
