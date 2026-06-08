@@ -10,7 +10,7 @@
 
 [![Rust](https://img.shields.io/badge/built_with-Rust-orange?style=flat-square)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Raspberry_Pi_5-red?style=flat-square)](https://www.raspberrypi.com/products/raspberry-pi-5/)
-[![Inference](https://img.shields.io/badge/inference-Anthropic_API-blueviolet?style=flat-square)](https://www.anthropic.com/)
+[![Inference](https://img.shields.io/badge/inference-Anthropic_%7C_Ollama_%7C_OpenRouter-blueviolet?style=flat-square)](https://www.anthropic.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 </div>
@@ -74,9 +74,11 @@ One `Event` type flows through the bus, the event log, and the WebSocket to the 
 - **Streaming turns** with thinking-block retention across multi-turn conversations
 - **Policy engine** — `suggest` / `auto-edit` / `yolo` modes × per-tool approval rules
 - **Sub-agent orchestration** — `agent_spawn` virtual tool; child sessions with fan-out and cascade cancel
+- **Council engine** — `convene_council` tool; 4 native AI personas (AZOTH / VAJRA / ELYSIAN / KETHER) run parallel rounds, score convergence, and synthesise a final answer; real-time streaming per agent column in the desktop UI; butt-in mid-session via API
 - **Self-evolution** — `propose_evolution` tool; agent can live-patch its own soul.md and policy; rollback snapshots
 - **Session persistence** — append-only JSONL per session; history replay with full context on reconnect
 - **Scheduled tasks** — cron-driven autonomous turns via `schedule_task` virtual tool
+- **Multi-backend inference** — hot-swap between Anthropic, Ollama, vLLM, and OpenRouter at runtime; Ollama cloud model filter (`:cloud` suffix) for on-demand frontier OSS models with no local storage
 
 ### Senses & voice
 - **Wake word** — `apex-wake` service: 3s ALSA chunks → whisper.cpp base.en → trigger
@@ -94,6 +96,7 @@ One `Event` type flows through the bus, the event log, and the WebSocket to the 
 - **File explorer** — two-pane lazy tree, upload, open in IDE/Notes
 - **Sketchpad** — HTML5 canvas, pen/eraser, PNG download
 - **Media player** — Sonus/Suno AI music generation + HTTP 206 range streaming
+- **Council Chamber** — dynamic WinBox per council session; per-persona streaming columns, convergence bar, live butt-in
 - **Sub-agent windows** — each child session gets its own WinBox with streaming output and approval buttons
 - **Home dashboard** — live CPU temp, RAM, disk, IAQ badge, thermal mini-canvas, agent stats
 
@@ -138,7 +141,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 
 ## Build roadmap
 
-26 steps, all complete:
+28 steps, all complete:
 
 | # | Feature |
 |---|---------|
@@ -168,6 +171,8 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 | 24 | Home dashboard — live system, environment, agent stats |
 | 25 | Voice I/O — whisper.cpp STT + Piper TTS, server-side ALSA recording |
 | 26 | Wake word — `apex-wake` service, `Ctrl+Space` manual trigger, auto voice turn |
+| 27 | Multi-inference backend — Anthropic / Ollama / vLLM / OpenRouter; hot-swap at runtime |
+| 28 | Council engine — parallel AI persona rounds, convergence scoring, synthesis; desktop Council Chamber UI |
 
 ---
 
