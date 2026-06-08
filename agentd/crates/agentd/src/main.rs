@@ -259,6 +259,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ToolProxy — lets the evolution applier call Cerebro tools directly for episode tracking.
     let tool_proxy = ToolProxy::new(sv_cmd_tx.clone());
+    let council_proxy = tool_proxy.clone();
 
     // Restore rollback snapshots from Cerebro evolution episodes on startup (best-effort).
     // CerebroCortex needs a moment to start; we wait then populate rollback_store from episodes.
@@ -316,6 +317,8 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&model_arc),
         Arc::clone(&council_butt_in),
         Arc::clone(&council_sessions),
+        log_dir.join("council"),
+        council_proxy,
     );
 
     // Subscribe before supervisor so no early PluginUp events are missed.

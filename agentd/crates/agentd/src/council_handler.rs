@@ -1,8 +1,11 @@
+use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use apexos_core::{BusHandle, CouncilAgentDef, Event, SessionId, ActionId, ToolOutput};
 use apexos_agent::run_council;
 use apexos_gateway::{CouncilButtInMap, CouncilRecord, CouncilSessionsMap};
+use apexos_plugins::ToolProxy;
 
 /// Message type: (calling session, tool call id, raw convene_council args)
 pub type CouncilMsg = (SessionId, ActionId, serde_json::Value);
@@ -22,6 +25,8 @@ pub fn spawn_council_handler(
     model_arc:       Arc<RwLock<String>>,
     butt_in_map:     CouncilButtInMap,
     sessions:        CouncilSessionsMap,
+    council_log_dir: PathBuf,
+    tool_proxy:      ToolProxy,
 ) {
     tokio::spawn(async move {
         let mut counter: u64 = 0;
@@ -109,11 +114,41 @@ pub fn spawn_council_handler(
             let cid_done   = council_id.clone();
             let butt_map_c = Arc::clone(&butt_in_map);
             let sessions_c = Arc::clone(&sessions);
+            let log_dir_c  = council_log_dir.clone();
+            let proxy_c    = tool_proxy.clone();
+            let topic_c    = topic.clone();
+            let agents_c   = agent_defs.clone();
 
             tokio::spawn(async move {
+                // Start JSONL log writer — self-terminates on CouncilComplete for this id
+                let mut event_sub = bcast_c.subscribe();
+                let cid_log  = cid_done.clone();
+                let log_path = log_dir_c.join(format!("{cid_log}.jsonl"));
+                tokio::fs::create_dir_all(&log_dir_c).await.ok();
+                let log_task = tokio::spawn(async move {
+                    let mut file = match tokio::fs::OpenOptions::new()
+                        .create(true).append(true).open(&log_path).await
+                    {
+                        Ok(f)  => f,
+                        Err(e) => { eprintln!("[council] log open: {e}"); return; }
+                    };
+                    loop {
+                        match event_sub.recv().await {
+                            Ok(ev) => {
+                                let done = matches!(&ev, Event::CouncilComplete { council_id: cid, .. } if cid == &cid_log);
+                                if let Some(line) = council_log_line(&cid_log, &ev) {
+                                    let _ = file.write_all(format!("{line}\n").as_bytes()).await;
+                                }
+                                if done { break; }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                });
+
                 let synthesis = run_council(
                     council_id,
-                    topic,
+                    topic_c.clone(),
                     agent_defs,
                     max_rounds,
                     consensus_threshold,
@@ -127,6 +162,9 @@ pub fn spawn_council_handler(
                     butt_in_rx,
                 ).await;
 
+                // Wait for log writer to flush
+                let _ = log_task.await;
+
                 // Clean up butt-in entry
                 butt_map_c.lock().await.remove(&cid_done);
 
@@ -135,11 +173,26 @@ pub fn spawn_council_handler(
                 if let Some(r) = sess.iter_mut().find(|r| r.id == cid_done) {
                     r.status    = "complete".into();
                     r.synthesis = synthesis.clone();
-                    // rounds is updated below via CouncilComplete event on bus;
-                    // here we set a minimum of 1 if we got a synthesis
                     if r.rounds == 0 { r.rounds = 1; }
                 }
                 drop(sess);
+
+                // Store council summary in Cerebro (best-effort)
+                let agent_ids = agents_c.iter().map(|a| a.id.as_str()).collect::<Vec<_>>().join(", ");
+                let content = format!(
+                    "Council [{cid_done}] — Topic: {topic_c}\nAgents: {agent_ids}\nSynthesis: {synthesis}"
+                );
+                tokio::spawn(async move {
+                    match proxy_c.call("memory_store", serde_json::json!({
+                        "content": content,
+                        "tags":    ["council", "apexos"],
+                        "agent_id": "APEX"
+                    })).await {
+                        Ok(out) if out.ok => {}
+                        Ok(out) => eprintln!("[council] cerebro store not ok: {:?}", out.content),
+                        Err(e)  => eprintln!("[council] cerebro store: {e}"),
+                    }
+                });
 
                 // Only emit ToolResult for agent-originated calls (not gateway sentinel)
                 if session.0 != u64::MAX {
@@ -155,6 +208,41 @@ pub fn spawn_council_handler(
             });
         }
     });
+}
+
+/// Serialise a council bus event to a JSONL line for the session log.
+/// Returns None for non-council events and for CouncilAgentDelta (too noisy).
+fn council_log_line(cid: &str, ev: &Event) -> Option<String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let v = match ev {
+        Event::CouncilStarted { council_id, topic, agents } if council_id == cid =>
+            serde_json::json!({
+                "type": "start", "id": council_id, "topic": topic,
+                "agents": agents.iter().map(|a| &a.id).collect::<Vec<_>>(), "ts": ts
+            }),
+        Event::CouncilRoundStart { council_id, round } if council_id == cid =>
+            serde_json::json!({ "type": "round_start", "round": round, "ts": ts }),
+        Event::CouncilAgentDone { council_id, round, agent_id, full_text } if council_id == cid =>
+            serde_json::json!({
+                "type": "agent_done", "round": round,
+                "agent": agent_id, "text": full_text, "ts": ts
+            }),
+        Event::CouncilRoundDone { council_id, round, convergence, agreements } if council_id == cid =>
+            serde_json::json!({
+                "type": "round_done", "round": round,
+                "convergence": convergence, "agreements": agreements, "ts": ts
+            }),
+        Event::CouncilComplete { council_id, rounds, reason, synthesis } if council_id == cid =>
+            serde_json::json!({
+                "type": "complete", "rounds": rounds,
+                "reason": reason, "synthesis": synthesis, "ts": ts
+            }),
+        _ => return None,
+    };
+    serde_json::to_string(&v).ok()
 }
 
 fn parse_agent_def(v: &serde_json::Value) -> Option<CouncilAgentDef> {
