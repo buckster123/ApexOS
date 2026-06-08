@@ -747,6 +747,51 @@ async function explorerInit() {
   if (tree) await explorerLoadInto(explorerRoot, tree, 0);
   const lbl = document.getElementById('explorer-path');
   if (lbl) lbl.textContent = explorerRoot;
+
+  const uploadInput = document.getElementById('explorer-upload');
+  if (uploadInput && !uploadInput._wired) {
+    uploadInput._wired = true;
+    uploadInput.onchange = (e) => {
+      explorerHandleUpload([...e.target.files]);
+      e.target.value = '';
+    };
+  }
+}
+
+function explorerUpload() {
+  document.getElementById('explorer-upload')?.click();
+}
+
+async function explorerHandleUpload(files) {
+  const destDir = (explorerSelected?.isDir ? explorerSelected.path : explorerRoot);
+  for (const file of files) {
+    const buf   = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    // Chunked to avoid stack overflow on large files
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i += 8192) {
+      binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + 8192, bytes.byteLength)));
+    }
+    const b64  = btoa(binary);
+    const dest = destDir.replace(/\/+$/, '') + '/' + file.name;
+    await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `echo '${b64}' | base64 -d > '${dest}'` }),
+    });
+  }
+  explorerRefresh();
+}
+
+function explorerOpenInIDE() {
+  if (!explorerSelected || explorerSelected.isDir) return;
+  fetch('/api/run', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command: `cat '${explorerSelected.path}'` }),
+  }).then(r => r.json()).then(d => {
+    // IDE reads window.ideFile on init
+    window.ideFile = { path: explorerSelected.path, content: d.stdout || '' };
+    openWin('ide');
+  });
 }
 
 async function explorerRefresh() {

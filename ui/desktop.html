@@ -203,7 +203,9 @@
       <span id="explorer-path" class="explorer-path-label">/var/lib/agentd/workspace</span>
       <button class="explorer-btn" onclick="explorerRefresh()" title="Refresh">↺</button>
       <button class="explorer-btn" onclick="explorerNewDir()" title="New directory">+ Dir</button>
+      <button class="explorer-btn" onclick="explorerUpload()" title="Upload file">⬆ Upload</button>
       <button class="explorer-btn explorer-btn-del" onclick="explorerDelete()" title="Delete selected">🗑</button>
+      <input type="file" id="explorer-upload" style="display:none" multiple>
     </div>
     <div class="explorer-body">
       <div class="explorer-tree" id="explorer-tree"></div>
@@ -211,7 +213,8 @@
         <div id="explorer-preview-path" class="explorer-preview-path"></div>
         <pre id="explorer-preview-content" class="explorer-preview-content">Select a file to preview</pre>
         <div class="explorer-preview-actions" id="explorer-preview-actions" style="display:none">
-          <button class="explorer-btn" onclick="explorerOpenInNotes()">📝 Open in Notes</button>
+          <button class="explorer-btn" onclick="explorerOpenInNotes()">📝 Notes</button>
+          <button class="explorer-btn" onclick="explorerOpenInIDE()">🖥 IDE</button>
         </div>
       </div>
     </div>
