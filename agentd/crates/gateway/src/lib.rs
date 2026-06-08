@@ -88,6 +88,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/evolution/history",  get(evolution_history_handler))
         .route("/api/evolution/stats",    get(evolution_stats_handler))
         .route("/api/sessions",           get(sessions_handler))
+        .route("/api/sessions/active",    get(active_sessions_handler))
         .route("/api/sessions/{id}/message", post(session_message_handler))
         .route("/api/run",                post(run_command_handler))
         .route("/api/snapshot",           get(snapshot_handler))
@@ -615,6 +616,24 @@ async fn evolution_stats_handler(State(state): State<GatewayState>) -> impl Into
 }
 
 // ── sessions ──────────────────────────────────────────────────────────────────
+
+/// GET /api/sessions/active — sessions currently loaded in memory (this daemon run).
+/// Returns session_id + message_count so agents can choose a target for send_to_agent.
+async fn active_sessions_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let histories = state.histories.lock().await;
+    let mut sessions: Vec<serde_json::Value> = histories.iter()
+        .map(|(sid, hist)| serde_json::json!({
+            "session_id":    sid.0,
+            "message_count": hist.len(),
+        }))
+        .collect();
+    drop(histories);
+    sessions.sort_by(|a, b| {
+        b["session_id"].as_u64().unwrap_or(0)
+            .cmp(&a["session_id"].as_u64().unwrap_or(0))
+    });
+    Json(serde_json::json!(sessions))
+}
 
 /// POST /api/sessions/:id/message — inject a message into an agent session from
 /// external code (scripts, other services, the desktop UI). Same path as A2A:

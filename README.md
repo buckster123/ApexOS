@@ -79,6 +79,7 @@ One `Event` type flows through the bus, the event log, and the WebSocket to the 
 - **Session persistence** — append-only JSONL per session; history replay with full context on reconnect
 - **Scheduled tasks** — cron-driven autonomous turns via `schedule_task` virtual tool
 - **Multi-backend inference** — hot-swap between Anthropic, Ollama, vLLM, and OpenRouter at runtime; Ollama cloud model filter (`:cloud` suffix) for on-demand frontier OSS models with no local storage
+- **Agent-to-agent messaging** — `send_to_agent` virtual tool; fire-and-forget peer messages between live sessions; `POST /api/sessions/{id}/message` for external injection; inbox display in sub-agent windows
 
 ### Senses & voice
 - **Wake word** — `apex-wake` service: 3s ALSA chunks → whisper.cpp base.en → trigger
@@ -141,7 +142,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 
 ## Build roadmap
 
-28 steps, all complete:
+30 steps, all complete:
 
 | # | Feature |
 |---|---------|
@@ -173,6 +174,8 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 | 26 | Wake word — `apex-wake` service, `Ctrl+Space` manual trigger, auto voice turn |
 | 27 | Multi-inference backend — Anthropic / Ollama / vLLM / OpenRouter; hot-swap at runtime |
 | 28 | Council engine — parallel AI persona rounds, convergence scoring, synthesis; desktop Council Chamber UI |
+| 29 | Council persistence + Cerebro hook — per-session JSONL log; post-synthesis memory store |
+| 30 | A2A messaging — `send_to_agent` peer tool; `GET /api/sessions/active`; inbox display in sub-agent windows |
 
 ---
 
