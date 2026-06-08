@@ -370,7 +370,7 @@ async function cameraSnap(night = false) {
     const objUrl = URL.createObjectURL(blob);
     if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
     img.src = objUrl;
-    img.style.display = '';
+    img.style.display = 'block';
     const ts = new Date().toLocaleTimeString();
     if (status) status.textContent = `${night ? 'night' : 'snap'} · ${ts}`;
   } catch (e) {
