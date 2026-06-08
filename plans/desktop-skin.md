@@ -36,8 +36,11 @@ ui/
 | `cerebro`    | iframe :8767/ui       | ✓ Phase A | Lazy src load on open                |
 | `sensorhead` | iframe :8080          | ✓ Phase A | Lazy src load on open                |
 | `settings`   | Alpine form           | ✓ Phase A | Soul editor, policy mode, plugin list|
-| `terminal`   | xterm.js + run_command| Phase B   | Real shell in a window               |
-| `camera`     | Snapshot on demand    | Phase B   | capture_visual / capture_night       |
+| `terminal`   | xterm.js + run_command| ✓ Phase B | cwd tracking, Ctrl+L                 |
+| `camera`     | rpicam-jpeg snapshot  | ✓ Phase B | Snap / Night mode, 1280×720          |
+| `notes`      | textarea + localStorage| ✓ Phase D | Auto-save + server persist           |
+| `sketchpad`  | HTML5 canvas          | ✓ Phase D | Pen/eraser/colour, Download PNG      |
+| `browser`    | iframe + URL bar      | ✓ Phase D | Local dashboards, back button        |
 | `ide`        | Monaco editor         | Phase C   | File browser + read/write via tools  |
 | `sub-agent`  | Second chat panel     | Phase C   | Spawned by agent_spawn virtual tool  |
 
@@ -107,42 +110,43 @@ so gateway stays decoupled from the policy crate.
 
 ## Phase C — Full OS feel
 
-**IDE window**
-- Monaco editor (bundle via `ui/lib/monaco/`, ~2MB)
+**Multi-wallpaper** ✓ DONE
+- [x] Wallpaper picker in Settings → Desktop tab: Thermal / Logo / Minimal
+- [x] `applyWallpaper(mode)` shows/hides `#thermal-canvas`, adjusts logo opacity
+- [x] Persisted in localStorage, restored at boot in `transitionToApp()`
+- [ ] Dark/light theme toggle (deferred — needs full CSS var override pass)
+
+**IDE window** (remaining)
+- Monaco editor (bundle via `ui/lib/monaco/`, ~2MB) — needs its own session
 - File browser panel: `list_dir` tool → tree view, click to `read_file` into editor
 - Save button → `write_file` tool
 
-**Sub-agent window**
+**Sub-agent window** (remaining)
 - `agent_spawn` virtual tool → bus emits `SubAgentStarted { session_id }`
 - Desktop intercepts event, opens a new `agent-{session_id}` WinBox window
-- DOM clone of `win-agent-content` structure, fresh output div
-
-**Multi-wallpaper + dark/light mode**
-- Wallpaper picker in Settings → toggle: ASCII / thermal canvas / dark gradient / light
-- CSS custom properties for dark/light theme — toggle via `body.light-mode` class
 
 ---
 
 ## Phase D — App ecosystem
 
-**File explorer window**
-- `win-explorer-content`: sidebar tree (via `list_dir` tool) + main pane (file preview via `read_file`)
-- Click directory → expand subtree. Click file → open in preview pane (or send to IDE window).
-- Toolbar: New File, New Dir, Delete (all via apexos-tools MCP)
+**Notes / Notepad window** ✓ DONE
+- [x] Textarea with filename input; localStorage auto-save on every keystroke
+- [x] Save button → `printf '%s' 'content' > /var/lib/agentd/workspace/<file>` via `/api/run`
+- [x] `notesInit()` called 30ms after WinBox mount
 
-**Notes / Notepad window**
-- Simple textarea, saves to a user-chosen path via `write_file` tool
-- Auto-saves on blur; title bar shows filename
+**Sketchpad window** ✓ DONE
+- [x] HTML5 canvas, pen/eraser/clear, colour picker, stroke size slider
+- [x] Download PNG → `canvas.toDataURL()` → anchor click (client-side, no server)
+- [x] Touch-action:none for tablet drawing; `sketchCtx` module-level survives resize
 
-**Sketchpad window**
-- HTML5 canvas with basic draw tools (pen, eraser, colour, stroke width)
-- Save button → canvas.toDataURL() → `write_file` as PNG to `/var/lib/agentd/workspace/sketches/`
-- Agent can then `read_file` the PNG path to see the sketch (describe_image via Cerebro vision or agent reads path)
+**Browser / Webview window** ✓ DONE
+- [x] iframe + URL bar + back button
+- [x] sandbox: allow-scripts/same-origin/forms/popups
+- [x] Default URL `localhost:8080` (SensorHead); good for any local dashboard
 
-**Browser / Webview window**
-- iframe + URL bar input at top
-- Useful for internal dashboards (Cerebro, SensorHead, any local service)
-- Cross-origin limits apply; mainly a quality-of-life launcher for known local ports
+**File explorer window** (remaining)
+- `win-explorer-content`: sidebar tree (via `list_dir` tool) + main pane (file preview)
+- Click directory → expand subtree; click file → preview or open in Notes/IDE
 
 ---
 
