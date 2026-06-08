@@ -201,6 +201,9 @@
   <!-- IDE window (Monaco) -->
   <div id="win-ide-content" class="win-content ide-win" style="display:none">
     <div class="ide-toolbar">
+      <button class="ide-btn" onclick="ideNew()" title="New file">+ New</button>
+      <button class="ide-btn" onclick="ideUpload()" title="Upload file from disk">⬆ Upload</button>
+      <input type="file" id="ide-upload-input" style="display:none">
       <input id="ide-path" class="ide-path-input" spellcheck="false" placeholder="/var/lib/agentd/workspace/file.rs">
       <button class="ide-btn" onclick="ideLoad()">Open</button>
       <span id="ide-lang" class="ide-lang-badge">plaintext</span>

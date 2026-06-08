@@ -728,6 +728,43 @@ function ideSetContent(path, content) {
   }
 }
 
+function ideNew() {
+  const defaultPath = '/var/lib/agentd/workspace/untitled.txt';
+  ideCurrentPath = defaultPath;
+  const pathEl = document.getElementById('ide-path');
+  if (pathEl) pathEl.value = defaultPath;
+  ideSetLang('plaintext');
+  if (monacoEditor) { monacoEditor.setValue(''); monacoEditor.focus(); }
+  ideSetStatus('new file', true);
+}
+
+function ideUpload() {
+  const input = document.getElementById('ide-upload-input');
+  if (!input) return;
+  input.onchange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    input.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target.result;
+      const path    = '/var/lib/agentd/workspace/' + file.name;
+      ideCurrentPath = path;
+      const pathEl = document.getElementById('ide-path');
+      if (pathEl) pathEl.value = path;
+      ideSetLang(ideLang(file.name));
+      if (monacoEditor) {
+        monacoEditor.setValue(content);
+        monacoEditor.setScrollPosition({ scrollTop: 0 });
+        monacoEditor.focus();
+      }
+      ideSetStatus('loaded · hit Save to write', true);
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
 async function ideLoad() {
   const pathEl = document.getElementById('ide-path');
   const path   = pathEl?.value?.trim();
