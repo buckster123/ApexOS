@@ -136,6 +136,12 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }
+#thermal-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  image-rendering: pixelated;
+}
 #wallpaper-logo {
   color: rgba(57,255,20,0.04);
   font-size: clamp(5px, 1vw, 10px);

@@ -931,7 +931,10 @@ function onSensorReading(ev) {
   const r = ev.reading;
   if (!r) return;
   if (r.kind === 'air_quality')  { sensorState.env    = r; sensorState.ts = Date.now(); }
-  if (r.kind === 'thermal_frame'){ sensorState.thermal = r; }
+  if (r.kind === 'thermal_frame'){
+    sensorState.thermal = r;
+    if (typeof window.updateThermalWallpaper === 'function') window.updateThermalWallpaper(r);
+  }
   if (r.kind === 'temperature' && r.sensor_id === 'cpu_thermal') sensorState.cpu_c = r.celsius;
   updateSensorWidget();
 }

@@ -26,6 +26,54 @@ const WALLPAPER_LOGO = [
   '╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝',
 ].join('\n');
 
+// ─── Thermal canvas wallpaper ─────────────────────────────────────────────────
+// ThermalFrame events carry only min_c/mean_c/max_c (no pixel array — core keeps
+// events small). We render a 32×24 grid with per-cell noise in the min/max range
+// to give the thermal-camera vibe, with colour varying from blue (cold) → red (hot).
+
+function thermalColor(c, alpha) {
+  const t = Math.max(0, Math.min(1, (c - 15) / 35));  // 15°C=0, 50°C=1
+  let r, g, b;
+  if (t < 0.5) {
+    const u = t * 2;           // 0..1 over cold→warm
+    r = Math.round(10  + u * 40);
+    g = Math.round(30  + u * 80);
+    b = Math.round(160 - u * 60);
+  } else {
+    const u = (t - 0.5) * 2;  // 0..1 over warm→hot
+    r = Math.round(50  + u * 205);
+    g = Math.round(110 - u * 80);
+    b = Math.round(100 - u * 90);
+  }
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+window.updateThermalWallpaper = function(frame) {
+  const canvas = document.getElementById('thermal-canvas');
+  if (!canvas) return;
+  const W = 32, H = 24;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.parentElement.clientWidth || 800;
+  const ch = canvas.parentElement.clientHeight || 600;
+  canvas.width  = cw * dpr;
+  canvas.height = ch * dpr;
+  canvas.style.width  = cw + 'px';
+  canvas.style.height = ch + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const cw2 = canvas.width, ch2 = canvas.height;
+  const cellW = cw2 / W, cellH = ch2 / H;
+  const range = Math.max(0.5, (frame.max_c || 30) - (frame.min_c || 25));
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const noise = (Math.random() - 0.5) * range;
+      const c = (frame.mean_c || 25) + noise;
+      ctx.fillStyle = thermalColor(c, 0.13);
+      ctx.fillRect(x * cellW, y * cellH, cellW + 1, cellH + 1);
+    }
+  }
+};
+
 // ─── Window registry + config ─────────────────────────────────────────────────
 const wins = {};
 
