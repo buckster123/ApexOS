@@ -57,6 +57,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/snapshot",           get(snapshot_handler))
         .route("/api/sonus/files",        get(sonus_files_handler))
         .route("/api/sonus/stream",       get(sonus_stream_handler))
+        .route("/terminal-ws",            get(terminal_ws_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -687,6 +688,133 @@ async fn get_policy_rules_handler(State(state): State<GatewayState>) -> impl Int
         }))
         .collect();
     Json(serde_json::json!({ "rules": rules }))
+}
+
+// ── PTY terminal ─────────────────────────────────────────────────────────────
+
+async fn terminal_ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(handle_terminal_ws)
+}
+
+unsafe fn open_pty_session() -> Option<(i32, i32, std::process::Child)> {
+    use std::os::unix::io::FromRawFd;
+    use std::os::unix::process::CommandExt;
+
+    let mut master_fd: libc::c_int = -1;
+    let mut slave_fd:  libc::c_int = -1;
+    let ws = libc::winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+    if libc::openpty(&mut master_fd, &mut slave_fd,
+                     std::ptr::null_mut(), std::ptr::null(), &ws) != 0 {
+        eprintln!("[terminal] openpty: {}", std::io::Error::last_os_error());
+        return None;
+    }
+
+    let slave_out = libc::dup(slave_fd);
+    let slave_err = libc::dup(slave_fd);
+    if slave_out < 0 || slave_err < 0 {
+        libc::close(master_fd); libc::close(slave_fd);
+        if slave_out >= 0 { libc::close(slave_out); }
+        return None;
+    }
+
+    let mut cmd = std::process::Command::new("/bin/bash");
+    cmd.env("TERM", "xterm-256color")
+       .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
+       .stdin(std::process::Stdio::from_raw_fd(slave_fd))
+       .stdout(std::process::Stdio::from_raw_fd(slave_out))
+       .stderr(std::process::Stdio::from_raw_fd(slave_err));
+
+    // post-fork pre-exec: new session + controlling terminal via fd 0 (stdin = slave)
+    cmd.pre_exec(|| unsafe {
+        libc::setsid();
+        libc::ioctl(0, libc::TIOCSCTTY as _, 0i32);
+        Ok(())
+    });
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => { eprintln!("[terminal] spawn: {e}"); libc::close(master_fd); return None; }
+    };
+
+    let mr = libc::dup(master_fd);
+    let mw = libc::dup(master_fd);
+    libc::close(master_fd);
+    if mr < 0 || mw < 0 { return None; }
+
+    Some((mr, mw, child))
+}
+
+async fn handle_terminal_ws(socket: WebSocket) {
+    let (mr, mw, mut child) = match unsafe { open_pty_session() } {
+        Some(t) => t,
+        None    => return,
+    };
+
+    // Separate fd for resize ioctls so mw can be moved into the writer thread
+    let mw_resize = unsafe { libc::dup(mw) };
+
+    let (from_pty_tx, mut from_pty_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (to_pty_tx,   to_pty_rx)       = std::sync::mpsc::channel::<Vec<u8>>();
+
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = unsafe { libc::read(mr, buf.as_mut_ptr() as _, buf.len()) };
+            if n <= 0 { break; }
+            if from_pty_tx.blocking_send(buf[..n as usize].to_vec()).is_err() { break; }
+        }
+        unsafe { libc::close(mr); }
+    });
+
+    std::thread::spawn(move || {
+        for data in to_pty_rx {
+            unsafe { libc::write(mw, data.as_ptr() as _, data.len()); }
+        }
+        unsafe { libc::close(mw); }
+    });
+
+    let (mut sink, mut stream) = socket.split();
+
+    let ws_write = tokio::spawn(async move {
+        while let Some(data) = from_pty_rx.recv().await {
+            if sink.send(Message::Binary(data.into())).await.is_err() { break; }
+        }
+    });
+
+    let ws_read = tokio::spawn(async move {
+        while let Some(Ok(msg)) = stream.next().await {
+            match msg {
+                Message::Text(text) => {
+                    if text.starts_with('{') {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if val["type"].as_str() == Some("resize") {
+                                let cols = val["cols"].as_u64().unwrap_or(80) as libc::c_ushort;
+                                let rows = val["rows"].as_u64().unwrap_or(24) as libc::c_ushort;
+                                unsafe {
+                                    let ws = libc::winsize {
+                                        ws_col: cols, ws_row: rows,
+                                        ws_xpixel: 0, ws_ypixel: 0,
+                                    };
+                                    libc::ioctl(mw_resize, libc::TIOCSWINSZ as _, &ws);
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    let _ = to_pty_tx.send(text.as_bytes().to_vec());
+                }
+                Message::Binary(data) => { let _ = to_pty_tx.send(data.to_vec()); }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        unsafe { libc::close(mw_resize); }
+        drop(to_pty_tx);
+    });
+
+    tokio::select! { _ = ws_write => {} _ = ws_read => {} }
+    let _ = child.kill();
+    eprintln!("[terminal] session closed");
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

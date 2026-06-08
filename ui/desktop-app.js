@@ -290,12 +290,11 @@ setInterval(() => {
 // ─── Terminal window ──────────────────────────────────────────────────────────
 let term     = null;
 let termFit  = null;
-let termBuf  = '';
-let termCwd  = '';
+let termWs   = null;
 
 function initTerminal() {
   if (term) {
-    // Already open — just refit in case window was resized
+    if (!termWs || termWs.readyState > 1) termConnectWs();
     if (termFit) setTimeout(() => termFit.fit(), 30);
     return;
   }
@@ -316,66 +315,34 @@ function initTerminal() {
   termFit = new window.FitAddon.FitAddon();
   term.loadAddon(termFit);
   term.open(container);
-  setTimeout(() => termFit.fit(), 30);
+  setTimeout(() => { termFit.fit(); termConnectWs(); }, 30);
 
-  term.writeln('\x1b[32m▸ ApexOS Terminal\x1b[0m  · Ctrl+L clear');
-  term.writeln('');
-  termPrompt();
+  term.onResize(({ cols, rows }) => {
+    if (termWs && termWs.readyState === 1)
+      termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+  });
 
-  term.onKey(({ key, domEvent }) => {
-    const k = domEvent.keyCode;
-    if (k === 13) {
-      term.writeln('');
-      const cmd = termBuf.trim();
-      termBuf = '';
-      if (cmd) termRun(cmd); else termPrompt();
-    } else if (k === 8) {
-      if (termBuf.length > 0) { termBuf = termBuf.slice(0, -1); term.write('\b \b'); }
-    } else if (domEvent.ctrlKey && domEvent.key === 'l') {
-      term.clear(); termPrompt();
-    } else if (!domEvent.ctrlKey && !domEvent.altKey && key.length === 1) {
-      termBuf += key; term.write(key);
-    }
+  term.onData(data => {
+    if (termWs && termWs.readyState === 1) termWs.send(data);
   });
 }
 
-function termPrompt() {
-  term.write(`\x1b[32m${termCwd || '~'}\x1b[0m \x1b[36m$\x1b[0m `);
-}
-
-async function termRun(cmd) {
-  if (cmd === 'clear' || cmd === 'cls') { term.clear(); termPrompt(); return; }
-
-  // Track cwd for `cd` commands
-  if (cmd.startsWith('cd ') || cmd === 'cd') {
-    const dir = cmd.length > 3 ? cmd.slice(3).trim() : '~';
-    const res = await termExec(`cd ${dir} 2>&1 && pwd`);
-    if (res.ok && res.stdout.trim()) termCwd = res.stdout.trim();
-    else if (res.stderr) term.writeln(`\x1b[31m${res.stderr.trimEnd()}\x1b[0m`);
-    termPrompt(); return;
-  }
-
-  const full = termCwd ? `cd ${termCwd} && ${cmd}` : cmd;
-  const res  = await termExec(full);
-  if (res.ok) {
-    if (res.stdout) term.write(res.stdout.replace(/\r?\n/g, '\r\n'));
-    if (res.stderr) term.write('\x1b[31m' + res.stderr.replace(/\r?\n/g, '\r\n') + '\x1b[0m');
-    if (!res.stdout && !res.stderr && res.exit_code !== 0)
-      term.writeln(`\x1b[31mexit ${res.exit_code}\x1b[0m`);
-  } else {
-    term.writeln(`\x1b[31merror: ${res.error}\x1b[0m`);
-  }
-  termPrompt();
-}
-
-async function termExec(cmd) {
-  try {
-    const r = await fetch('/api/run', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ command: cmd }),
-    });
-    return await r.json();
-  } catch (e) { return { ok: false, error: String(e) }; }
+function termConnectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  termWs = new WebSocket(`${proto}//${location.host}/terminal-ws`);
+  termWs.binaryType = 'arraybuffer';
+  termWs.onopen = () => {
+    term.writeln('\x1b[32m▸ Terminal connected\x1b[0m');
+    termWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  };
+  termWs.onmessage = e => {
+    if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
+    else term.write(e.data);
+  };
+  termWs.onclose = () => {
+    if (term) term.writeln('\r\n\x1b[31m▸ disconnected\x1b[0m');
+  };
+  termWs.onerror = () => {};
 }
 
 // ─── Sketchpad ────────────────────────────────────────────────────────────────

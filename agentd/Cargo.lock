@@ -67,8 +67,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apexos-core",
+ "apexos-plugins",
  "axum",
  "futures-util",
+ "libc",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.2",
