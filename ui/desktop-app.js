@@ -133,6 +133,11 @@ const WIN_DEFAULTS = {
     x: 160, y: 60, width: 780, height: 520,
     background: 'var(--wb-bg)',
   },
+  ide: {
+    title: '🖥 IDE',
+    x: 60, y: 50, width: 900, height: 620,
+    background: '#1e1e1e',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -194,6 +199,7 @@ function openWin(id) {
   if (id === 'notes')     setTimeout(notesInit, 30);
   if (id === 'sketchpad') setTimeout(sketchInit, 30);
   if (id === 'explorer')  setTimeout(explorerInit, 30);
+  if (id === 'ide')       setTimeout(ideInit, 60);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -625,6 +631,134 @@ function settingsApp() {
       } catch {}
     },
   };
+}
+
+// ─── Monaco IDE ───────────────────────────────────────────────────────────────
+let monacoEditor = null;
+let monacoReady  = false;
+let ideCurrentPath = '';
+
+const IDE_LANG_MAP = {
+  rs: 'rust', js: 'javascript', ts: 'typescript', py: 'python',
+  html: 'html', css: 'css', scss: 'scss', less: 'less',
+  md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml',
+  sh: 'shell', bash: 'shell', toml: 'ini', xml: 'xml',
+  sql: 'sql', go: 'go', cpp: 'cpp', c: 'c', cs: 'csharp',
+  java: 'java', rb: 'ruby', php: 'php', swift: 'swift',
+  kt: 'kotlin', lua: 'lua', r: 'r', txt: 'plaintext',
+};
+
+function ideLang(path) {
+  const ext = (path || '').split('.').pop().toLowerCase();
+  return IDE_LANG_MAP[ext] || 'plaintext';
+}
+
+function ideSetStatus(msg, ok = true) {
+  const el = document.getElementById('ide-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = ok ? 'var(--accent)' : 'var(--accent3)';
+  if (msg) { clearTimeout(el._t); el._t = setTimeout(() => el.textContent = '', 3000); }
+}
+
+function ideSetLang(lang) {
+  const el = document.getElementById('ide-lang');
+  if (el) el.textContent = lang;
+  if (monacoEditor && monacoReady) {
+    const model = monacoEditor.getModel();
+    if (model) monaco.editor.setModelLanguage(model, lang);
+  }
+}
+
+function ideInit() {
+  if (monacoReady) {
+    ideApplyPendingFile();
+    return;
+  }
+
+  require.config({ paths: { vs: '/lib/monaco/vs' } });
+  require(['vs/editor/editor.main'], function() {
+    const container = document.getElementById('ide-editor');
+    if (!container) return;
+
+    monacoEditor = monaco.editor.create(container, {
+      value: '',
+      language: 'plaintext',
+      theme: 'vs-dark',
+      fontSize: 13,
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+      lineHeight: 20,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      wordWrap: 'off',
+      renderWhitespace: 'selection',
+      smoothScrolling: true,
+      cursorBlinking: 'smooth',
+      tabSize: 2,
+      automaticLayout: true,   // resizes with the WinBox window
+    });
+
+    // Ctrl+S to save
+    monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, ideSave);
+
+    monacoReady = true;
+    ideApplyPendingFile();
+  });
+}
+
+function ideApplyPendingFile() {
+  // Called after Monaco loads — apply window.ideFile if explorer sent one
+  if (window.ideFile) {
+    const f = window.ideFile;
+    window.ideFile = null;
+    ideSetContent(f.path, f.content);
+  }
+}
+
+function ideSetContent(path, content) {
+  ideCurrentPath = path;
+  const pathEl = document.getElementById('ide-path');
+  if (pathEl) pathEl.value = path;
+  const lang = ideLang(path);
+  ideSetLang(lang);
+  if (monacoEditor) {
+    monacoEditor.setValue(content);
+    monacoEditor.setScrollPosition({ scrollTop: 0 });
+    monacoEditor.focus();
+  }
+}
+
+async function ideLoad() {
+  const pathEl = document.getElementById('ide-path');
+  const path   = pathEl?.value?.trim();
+  if (!path) return;
+  ideSetStatus('loading…', true);
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `cat '${path}'` }),
+    });
+    const d = await r.json();
+    if (d.exit_code !== 0) { ideSetStatus('not found', false); return; }
+    ideSetContent(path, d.stdout || '');
+    ideSetStatus('loaded', true);
+  } catch (e) { ideSetStatus('error: ' + e, false); }
+}
+
+async function ideSave() {
+  if (!monacoEditor || !ideCurrentPath) return;
+  const content  = monacoEditor.getValue();
+  const escaped  = content.replace(/'/g, "'\\''");
+  ideSetStatus('saving…', true);
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `printf '%s' '${escaped}' > '${ideCurrentPath}'` }),
+    });
+    const d = await r.json();
+    if (d.exit_code === 0) ideSetStatus('✓ saved', true);
+    else ideSetStatus('save failed', false);
+  } catch (e) { ideSetStatus('error: ' + e, false); }
 }
 
 // ─── File Explorer ───────────────────────────────────────────────────────────

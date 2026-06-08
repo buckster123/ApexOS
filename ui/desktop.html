@@ -94,6 +94,7 @@
       <button class="sm-item" onclick="launchApp('notes')"><span class="sm-emoji">📝</span>Notes</button>
       <button class="sm-item" onclick="launchApp('browser')"><span class="sm-emoji">🌐</span>Browser</button>
       <button class="sm-item" onclick="launchApp('explorer')"><span class="sm-emoji">📁</span>Explorer</button>
+      <button class="sm-item" onclick="launchApp('ide')"><span class="sm-emoji">🖥</span>IDE</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -195,6 +196,19 @@
       <span id="notes-status" class="notes-status"></span>
     </div>
     <textarea id="notes-editor" class="notes-editor" spellcheck="false" placeholder="// start typing…"></textarea>
+  </div>
+
+  <!-- IDE window (Monaco) -->
+  <div id="win-ide-content" class="win-content ide-win" style="display:none">
+    <div class="ide-toolbar">
+      <input id="ide-path" class="ide-path-input" spellcheck="false" placeholder="/var/lib/agentd/workspace/file.rs">
+      <button class="ide-btn" onclick="ideLoad()">Open</button>
+      <span id="ide-lang" class="ide-lang-badge">plaintext</span>
+      <span class="ide-spacer"></span>
+      <button class="ide-btn ide-btn-save" onclick="ideSave()">💾 Save</button>
+      <span id="ide-status" class="ide-status"></span>
+    </div>
+    <div id="ide-editor" class="ide-editor"></div>
   </div>
 
   <!-- File Explorer window -->
@@ -340,6 +354,7 @@
   <!-- hdr-center needed by app.js for tool count + collapse-all -->
   <span id="hdr-center" style="display:none"></span>
 
+  <script src="lib/monaco/vs/loader.js"></script>
   <script src="lib/winbox.min.js"></script>
   <script src="lib/xterm.min.js"></script>
   <script src="lib/xterm-addon-fit.min.js"></script>
