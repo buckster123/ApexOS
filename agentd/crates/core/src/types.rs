@@ -150,6 +150,10 @@ pub enum Event {
     /// Emitted by the /sensor-bridge WS handler when a body-pi node sends data.
     SensorReading { node_id: String, reading: SensorReading, timestamp: u64 },
 
+    // ── voice / wake word ─────────────────────────────────
+    /// Emitted by gateway after piper ding plays; frontend auto-records + submits.
+    WakeTriggered,
+
     // ── system ────────────────────────────────────────────
     Error { session: Option<SessionId>, message: String },
 

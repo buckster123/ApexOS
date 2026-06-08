@@ -1,0 +1,17 @@
+[Unit]
+Description=ApexOS wake word detector
+After=network.target agentd.service sound.target
+Wants=agentd.service
+
+[Service]
+Type=simple
+User=agentd
+EnvironmentFile=/etc/agentd/env
+ExecStart=/usr/bin/python3 /opt/apex-wake/wake.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -60,6 +60,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/transcribe",         post(transcribe_handler))
         .route("/api/record/start",       post(record_start_handler))
         .route("/api/record/stop",        post(record_stop_handler))
+        .route("/api/wake",               post(wake_handler))
         .route("/api/speak",              post(speak_handler))
         .route("/terminal-ws",            get(terminal_ws_handler))
         .fallback(static_handler)
@@ -692,6 +693,48 @@ async fn get_policy_rules_handler(State(state): State<GatewayState>) -> impl Int
         }))
         .collect();
     Json(serde_json::json!({ "rules": rules }))
+}
+
+// ── Wake word trigger ─────────────────────────────────────────────────────────
+
+static WAKE_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+async fn wake_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    // One wake sequence at a time
+    if WAKE_ACTIVE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return StatusCode::CONFLICT.into_response();
+    }
+
+    tokio::spawn(async move {
+        // 1. Piper "yes?" — wait for it to finish so mic captures after the ding
+        let model = std::env::var("PIPER_MODEL").unwrap_or_default();
+        if !model.is_empty() {
+            let wav = "/tmp/apex_wake_ding.wav";
+            if let Ok(mut child) = tokio::process::Command::new("piper")
+                .args(["--model", &model, "--output_file", wav])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = stdin.write_all(b"yes?").await;
+                }
+                let _ = child.wait().await;
+                let _ = tokio::process::Command::new("aplay")
+                    .args(["-q", wav])
+                    .output().await;
+                let _ = tokio::fs::remove_file(wav).await;
+            }
+        }
+
+        // 2. Signal the frontend to start recording
+        let _ = state.bcast.send(apexos_core::Event::WakeTriggered);
+
+        WAKE_ACTIVE.store(false, Ordering::SeqCst);
+    });
+
+    StatusCode::OK.into_response()
 }
 
 // ── Server-side mic recording (ALSA → whisper, no browser getUserMedia needed) ─

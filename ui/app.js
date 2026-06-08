@@ -269,6 +269,9 @@ function handleEvent(ev) {
     case 'evolution_proposed':  onEvolutionProposed(ev);  break;
     case 'evolution_applied':   onEvolutionApplied(ev);   break;
     case 'sensor_reading':      onSensorReading(ev);      break;
+    case 'wake_triggered':
+      if (typeof window.onWakeTriggered === 'function') window.onWakeTriggered();
+      break;
     case 'sub_agent_started':
       if (typeof window.openSubAgentWin === 'function') window.openSubAgentWin(ev);
       break;

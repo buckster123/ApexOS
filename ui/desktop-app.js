@@ -1488,6 +1488,44 @@ window._voiceOnAgentDone = () => {
   agentTurnText = '';
 };
 
+// Wake word triggered: server played ding, now auto-record → transcribe → submit
+const WAKE_RECORD_SECS = 7;
+let wakeRecordTimer = null;
+
+window.onWakeTriggered = async () => {
+  const btn = document.getElementById('mic-btn');
+  // Force speaker on for this turn so the response gets spoken
+  if (!speakerOn) speakerToggle();
+  // Flash the mic button to signal we're listening
+  if (btn) { btn.classList.add('recording'); btn.textContent = '⏹'; }
+  micServerActive = true;
+  try {
+    await fetch('/api/record/start', { method: 'POST' });
+  } catch (e) { return; }
+  // Auto-stop after WAKE_RECORD_SECS
+  wakeRecordTimer = setTimeout(async () => {
+    wakeRecordTimer = null;
+    micServerActive = false;
+    if (btn) { btn.classList.remove('recording'); btn.textContent = '⏳'; btn.disabled = true; }
+    try {
+      const resp = await fetch('/api/record/stop', { method: 'POST' });
+      if (resp.ok) {
+        const { text } = await resp.json();
+        if (text && text.trim()) {
+          const inp = document.getElementById('prompt-input');
+          if (inp) {
+            inp.value = text.trim();
+            // Auto-submit — find sendPrompt from app.js scope
+            if (typeof sendPrompt === 'function') sendPrompt();
+            else inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          }
+        }
+      }
+    } catch (e) { console.warn('[wake] stop error', e); }
+    finally { if (btn) { btn.textContent = '🎤'; btn.disabled = false; } }
+  }, WAKE_RECORD_SECS * 1000);
+};
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Power modal
@@ -1497,6 +1535,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Mic + speaker buttons
   document.getElementById('mic-btn')?.addEventListener('click', micToggle);
   document.getElementById('speaker-btn')?.addEventListener('click', speakerToggle);
+  // Ctrl+Space → wake (same sequence as wake word, no mic needed)
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.code === 'Space') {
+      e.preventDefault();
+      fetch('/api/wake', { method: 'POST' }).catch(() => {});
+    }
+  });
   // Evo badge click
   document.getElementById('hdr-evo')?.addEventListener('click', () => {
     if (typeof showEvoModal === 'function') showEvoModal();

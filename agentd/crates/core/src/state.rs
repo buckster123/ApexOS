@@ -80,6 +80,8 @@ impl SystemState {
 
             Event::SensorReading { .. } => {}
 
+            Event::WakeTriggered => {}
+
             Event::Error { .. } => {}
 
             // Evolution events are handled by the async evolution layer.
