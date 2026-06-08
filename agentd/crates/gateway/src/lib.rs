@@ -54,6 +54,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/evolution/stats",    get(evolution_stats_handler))
         .route("/api/sessions",           get(sessions_handler))
         .route("/api/run",                post(run_command_handler))
+        .route("/api/snapshot",           get(snapshot_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -525,6 +526,48 @@ async fn run_command_handler(
         })),
         Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
         Err(_)     => Json(serde_json::json!({ "ok": false, "error": "timed out (30s)" })),
+    }
+}
+
+// ── camera snapshot ───────────────────────────────────────────────────────────
+
+async fn snapshot_handler(
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let night = params.get("night").map(|v| v == "true" || v == "1").unwrap_or(false);
+    let out = "/tmp/apex_snapshot.jpg";
+
+    let mut cmd = tokio::process::Command::new("rpicam-jpeg");
+    cmd.args(["--output", out, "--timeout", "3000",
+              "--width",  "1280", "--height", "720",
+              "--nopreview", "--camera", "0", "-q", "85"]);
+    if night {
+        cmd.args(["--ev", "2", "--awb", "fluorescent", "--shutter", "100000"]);
+    }
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        cmd.output(),
+    ).await;
+
+    match result {
+        Ok(Ok(o)) if o.status.success() => {
+            match tokio::fs::read(out).await {
+                Ok(bytes) => (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "image/jpeg")],
+                    bytes,
+                ).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            }
+        }
+        Ok(Ok(o)) => {
+            let err = String::from_utf8_lossy(&o.stderr).to_string();
+            eprintln!("[snapshot] rpicam-jpeg failed: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, err).into_response()
+        }
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(_)     => (StatusCode::GATEWAY_TIMEOUT, "camera timeout (10s)").into_response(),
     }
 }
 

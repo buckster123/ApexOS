@@ -108,6 +108,11 @@ const WIN_DEFAULTS = {
     x: 120, y: 80, width: 720, height: 460,
     background: '#0d0f18',
   },
+  camera: {
+    title: '📷 Camera',
+    x: 180, y: 60, width: 680, height: 520,
+    background: '#0d0f18',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -336,6 +341,45 @@ async function termExec(cmd) {
     });
     return await r.json();
   } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// ─── Camera window ───────────────────────────────────────────────────────────
+async function cameraSnap(night = false) {
+  const img         = document.getElementById('camera-snapshot');
+  const placeholder = document.getElementById('camera-placeholder');
+  const status      = document.getElementById('camera-status');
+  const snapBtn     = document.getElementById('camera-snap-btn');
+  const nightBtn    = document.getElementById('camera-night-btn');
+
+  if (!img) return;
+  if (snapBtn)  snapBtn.disabled = true;
+  if (nightBtn) nightBtn.disabled = true;
+  if (status)   status.textContent = night ? 'capturing (night mode)…' : 'capturing…';
+  if (placeholder) placeholder.style.display = 'none';
+
+  try {
+    const url = `/api/snapshot${night ? '?night=true' : ''}`;
+    const r = await fetch(url);
+    if (!r.ok) {
+      const txt = await r.text();
+      if (status) status.textContent = 'error: ' + txt.slice(0, 80);
+      if (placeholder) { placeholder.textContent = 'Capture failed'; placeholder.style.display = ''; }
+      return;
+    }
+    const blob = await r.blob();
+    const objUrl = URL.createObjectURL(blob);
+    if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    img.src = objUrl;
+    img.style.display = '';
+    const ts = new Date().toLocaleTimeString();
+    if (status) status.textContent = `${night ? 'night' : 'snap'} · ${ts}`;
+  } catch (e) {
+    if (status) status.textContent = 'error: ' + e;
+    if (placeholder) { placeholder.textContent = 'Capture failed'; placeholder.style.display = ''; }
+  } finally {
+    if (snapBtn)  snapBtn.disabled = false;
+    if (nightBtn) nightBtn.disabled = false;
+  }
 }
 
 // ─── Alpine data for Settings window ─────────────────────────────────────────

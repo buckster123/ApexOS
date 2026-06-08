@@ -89,6 +89,7 @@
       <button class="sm-item" onclick="launchApp('sensors')"><span class="sm-emoji">📡</span>Sensors</button>
       <button class="sm-item" onclick="launchApp('cerebro')"><span class="sm-emoji">🧠</span>Cerebro</button>
       <button class="sm-item" onclick="launchApp('sensorhead')"><span class="sm-emoji">👁</span>Sensor Head</button>
+      <button class="sm-item" onclick="launchApp('camera')"><span class="sm-emoji">📷</span>Camera</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -144,6 +145,19 @@
   <!-- Terminal window -->
   <div id="win-terminal-content" class="win-content terminal-win" style="display:none">
     <div id="terminal-xterm"></div>
+  </div>
+
+  <!-- Camera window -->
+  <div id="win-camera-content" class="win-content camera-win" style="display:none">
+    <div class="camera-toolbar">
+      <button class="camera-btn" onclick="cameraSnap(false)" id="camera-snap-btn">📷 Snap</button>
+      <button class="camera-btn" onclick="cameraSnap(true)" id="camera-night-btn">🌙 Night</button>
+      <span id="camera-status" class="camera-status"></span>
+    </div>
+    <div class="camera-view">
+      <img id="camera-snapshot" alt="">
+      <div id="camera-placeholder">Click Snap to capture</div>
+    </div>
   </div>
 
   <!-- Cerebro window (iframe) -->
