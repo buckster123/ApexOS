@@ -458,6 +458,43 @@ impl Supervisor {
             return;
         }
 
+        // Virtual tool: send_to_agent — fire-and-forget async peer-to-peer message.
+        if call.tool == "send_to_agent" {
+            let to_id   = call.args["session_id"].as_u64().map(SessionId);
+            let body    = call.args["message"].as_str().unwrap_or("").to_owned();
+            let call_id = call.id;
+            let msg_id  = call.id.0;
+            let bus     = self.bus.clone();
+            match to_id {
+                Some(to) => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::AgentMessage { from: session, to, body, msg_id }).await;
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput {
+                                ok:      true,
+                                content: serde_json::json!({ "status": "sent", "msg_id": msg_id }),
+                            },
+                        }).await;
+                    });
+                }
+                None => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput {
+                                ok:      false,
+                                content: serde_json::json!("send_to_agent: missing or invalid session_id"),
+                            },
+                        }).await;
+                    });
+                }
+            }
+            return;
+        }
+
         // Virtual tool: agent_spawn is handled by the async router, not an MCP plugin.
         if call.tool == "agent_spawn" {
             let prompt  = call.args["prompt"].as_str().unwrap_or("").to_owned();

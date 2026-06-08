@@ -663,6 +663,7 @@ html, body {
 .subagent-text { margin: 4px 0; color: var(--text); }
 .subagent-output .tool-call { margin: 4px 0; font-size: 11px; }
 .subagent-output .approval-block { margin: 6px 0; }
+.subagent-inbox-msg { font-size: 11px; color: var(--text-dim); padding: 3px 6px; border-left: 2px solid var(--accent2); margin: 4px 0; opacity: 0.85; }
 
 /* ─── Monaco IDE ─────────────────────────────────────────────────────────── */
 .ide-win { display: flex; flex-direction: column; height: 100%; overflow: hidden; background: #1e1e1e; }

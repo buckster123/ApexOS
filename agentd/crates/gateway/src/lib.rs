@@ -88,6 +88,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/evolution/history",  get(evolution_history_handler))
         .route("/api/evolution/stats",    get(evolution_stats_handler))
         .route("/api/sessions",           get(sessions_handler))
+        .route("/api/sessions/{id}/message", post(session_message_handler))
         .route("/api/run",                post(run_command_handler))
         .route("/api/snapshot",           get(snapshot_handler))
         .route("/api/sonus/files",        get(sonus_files_handler))
@@ -614,6 +615,22 @@ async fn evolution_stats_handler(State(state): State<GatewayState>) -> impl Into
 }
 
 // ── sessions ──────────────────────────────────────────────────────────────────
+
+/// POST /api/sessions/:id/message — inject a message into an agent session from
+/// external code (scripts, other services, the desktop UI). Same path as A2A:
+/// emits UserPrompt on the bus so the target session starts a new turn.
+async fn session_message_handler(
+    State(state): State<GatewayState>,
+    Path(id):     Path<u64>,
+    Json(body):   Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let message = match body["message"].as_str() {
+        Some(s) if !s.trim().is_empty() => s.to_string(),
+        _ => return Json(serde_json::json!({ "ok": false, "error": "missing message" })),
+    };
+    state.bus.emit(Event::UserPrompt { session: SessionId(id), text: message }).await;
+    Json(serde_json::json!({ "ok": true, "session_id": id }))
+}
 
 async fn sessions_handler(State(state): State<GatewayState>) -> impl IntoResponse {
     use apexos_core::{ContentBlock, Message};

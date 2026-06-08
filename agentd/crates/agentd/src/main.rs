@@ -895,6 +895,13 @@ fn spawn_agent_router(
                     abort_handles.lock().await.insert(child_id, handle.abort_handle());
                 }
 
+                // ── agent-to-agent message routing ───────────────────────────
+                Ok(Event::AgentMessage { from, to, body, msg_id }) => {
+                    let text = format!("[Agent {}]: {}", from.0, body);
+                    bus.emit(Event::UserPrompt { session: to, text }).await;
+                    bus.emit(Event::AgentMessageAck { msg_id, from }).await;
+                }
+
                 // ── cancellation ─────────────────────────────────────────────
                 Ok(Event::UserCancel { session }) => {
                     cascade_cancel(session, &session_children, &abort_handles).await;
@@ -1020,6 +1027,7 @@ async fn gather_tools(
     tools.push(list_schedules_spec());
     tools.push(cancel_schedule_spec());
     tools.push(convene_council_spec());
+    tools.push(send_to_agent_spec());
     tools
 }
 
@@ -1237,6 +1245,30 @@ fn convene_council_spec() -> ToolSpec {
                 }
             },
             "required": ["topic", "agents"]
+        }),
+    }
+}
+
+fn send_to_agent_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "send_to_agent".into(),
+        description: "Send an asynchronous message to another agent session (fire-and-forget). \
+                      The target session receives the message as a new autonomous turn prefixed \
+                      with '[Agent N]:'. Returns immediately — use agent_spawn if you need the \
+                      result. Use GET /api/sessions to list active session IDs.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type":        "integer",
+                    "description": "Target session ID."
+                },
+                "message": {
+                    "type":        "string",
+                    "description": "Message to deliver to the target agent."
+                }
+            },
+            "required": ["session_id", "message"]
         }),
     }
 }

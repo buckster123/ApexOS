@@ -98,6 +98,10 @@ impl SystemState {
             Event::EvolutionProposed { .. }    => {}
             Event::EvolutionApplied  { .. }    => {}
             Event::EvolutionRolledBack { .. }  => {}
+
+            // A2A: routing handled by the agent router; state is a no-op.
+            Event::AgentMessage    { .. } => {}
+            Event::AgentMessageAck { .. } => {}
         }
     }
 

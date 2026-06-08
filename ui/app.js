@@ -158,6 +158,23 @@ window.removeWatchedSession = (id) => subAgentOutputs.delete(id);
 
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
+  // Agent-to-agent messages: route to destination session window (no `session` field).
+  if (ev.type === 'agent_message') {
+    const msgEl = document.createElement('div');
+    msgEl.className = 'subagent-inbox-msg';
+    msgEl.textContent = `\u{1F4E8} from Agent ${ev.from}: ${ev.body}`;
+    if (subAgentOutputs.has(ev.to)) {
+      const entry = subAgentOutputs.get(ev.to);
+      entry.outputEl.appendChild(msgEl);
+      entry.outputEl.scrollTop = entry.outputEl.scrollHeight;
+    } else if (SESSION_ID !== null && ev.to === SESSION_ID) {
+      const out = document.getElementById('output');
+      if (out) { out.appendChild(msgEl); out.scrollTop = out.scrollHeight; }
+    }
+    return;
+  }
+  if (ev.type === 'agent_message_ack') return;
+
   // null means daemon-scoped; undefined means all sessions.
   // Also pass through events for watched child sessions.
   if (SESSION_ID !== null && ev.session != null &&

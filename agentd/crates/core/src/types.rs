@@ -166,6 +166,12 @@ pub enum Event {
     /// Emitted by gateway after piper ding plays; frontend auto-records + submits.
     WakeTriggered,
 
+    // ── agent-to-agent messaging ───────────────────────────
+    /// Emitted by send_to_agent virtual tool; agent router injects as UserPrompt
+    /// into the target session and then emits AgentMessageAck.
+    AgentMessage    { from: SessionId, to: SessionId, body: String, msg_id: u64 },
+    AgentMessageAck { msg_id: u64, from: SessionId },
+
     // ── system ────────────────────────────────────────────
     // council
     CouncilStarted    { council_id: String, topic: String, agents: Vec<CouncilAgentDef> },
