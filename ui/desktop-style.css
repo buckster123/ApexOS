@@ -651,3 +651,28 @@ html, body {
 .explorer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explorer-loading { display: block; padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 #sessions-new-btn:hover { background: rgba(108,138,255,0.1); }
+
+/* ─── Media Player ───────────────────────────────────────────────────────── */
+.player-win { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.player-tracklist { flex: 1; overflow-y: auto; padding: 4px 0; border-bottom: 1px solid var(--border); min-height: 0; }
+.player-empty { padding: 16px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); text-align: center; }
+.player-track-row { display: flex; align-items: center; padding: 6px 12px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.03); gap: 8px; transition: background 0.1s; }
+.player-track-row:hover { background: rgba(255,255,255,0.05); }
+.player-track-row.active { background: rgba(57,255,20,0.07); border-left: 2px solid var(--accent); padding-left: 10px; }
+.player-track-name { flex: 1; font-family: var(--mono); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-track-play { background: none; border: 1px solid var(--border); color: var(--text); padding: 2px 7px; font-size: 10px; cursor: pointer; border-radius: 2px; flex-shrink: 0; transition: border-color 0.1s, color 0.1s; }
+.player-track-play:hover { border-color: var(--accent); color: var(--accent); }
+.player-bottom { padding: 10px 12px 8px; background: rgba(0,0,0,0.25); flex-shrink: 0; }
+.player-now-playing { font-family: var(--mono); font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px; min-height: 14px; }
+.player-progress-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.player-time, .player-duration { font-family: var(--mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; min-width: 32px; }
+.player-duration { text-align: right; }
+.player-seek, .player-vol { -webkit-appearance: none; appearance: none; height: 3px; background: var(--border); border-radius: 2px; cursor: pointer; accent-color: var(--accent); }
+.player-seek { flex: 1; }
+.player-controls { display: flex; align-items: center; gap: 6px; }
+.player-btn { background: none; border: 1px solid var(--border); color: var(--text); padding: 4px 10px; font-size: 13px; cursor: pointer; border-radius: 2px; transition: border-color 0.15s, color 0.15s; font-family: var(--mono); }
+.player-btn:hover { border-color: var(--accent); color: var(--accent); }
+.player-btn-play { padding: 4px 18px; border-color: var(--accent); color: var(--accent); }
+.player-vol-label { font-size: 13px; color: var(--text-dim); flex-shrink: 0; }
+.player-vol { max-width: 80px; }
+.player-refresh-btn { margin-left: auto; padding: 4px 8px; font-size: 12px; }

@@ -55,6 +55,8 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/sessions",           get(sessions_handler))
         .route("/api/run",                post(run_command_handler))
         .route("/api/snapshot",           get(snapshot_handler))
+        .route("/api/sonus/files",        get(sonus_files_handler))
+        .route("/api/sonus/stream",       get(sonus_stream_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -569,6 +571,108 @@ async fn snapshot_handler(
         Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         Err(_)     => (StatusCode::GATEWAY_TIMEOUT, "camera timeout (10s)").into_response(),
     }
+}
+
+// ── Sonus / media ────────────────────────────────────────────────────────────
+
+fn sonus_dir() -> std::path::PathBuf {
+    std::env::var("SUNO_DOWNLOAD_DIR")
+        .unwrap_or_else(|_| "/var/lib/agentd/workspace/sonus".into())
+        .into()
+}
+
+async fn sonus_files_handler() -> impl IntoResponse {
+    const AUDIO_EXTS: &[&str] = &["mp3", "wav", "ogg", "webm", "flac", "aac", "m4a", "opus"];
+    let dir = sonus_dir();
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let ext  = name.rsplit('.').next().unwrap_or("").to_lowercase();
+            if !AUDIO_EXTS.contains(&ext.as_str()) { continue; }
+            let size = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+            let url  = format!("/api/sonus/stream?name={}", urlencoding_simple(&name));
+            entries.push(serde_json::json!({ "name": name, "size": size, "url": url }));
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+    });
+
+    Json(serde_json::json!(entries))
+}
+
+fn urlencoding_simple(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+        ' ' => "+".to_string(),
+        _ => format!("%{:02X}", c as u32),
+    }).collect()
+}
+
+async fn sonus_stream_handler(
+    Query(params):   Query<HashMap<String, String>>,
+    req_headers:     axum::http::HeaderMap,
+) -> Response {
+    let name = match params.get("name").map(|s| s.trim().to_string()) {
+        Some(n) if !n.is_empty() => n,
+        _ => return (StatusCode::BAD_REQUEST, "missing name").into_response(),
+    };
+    if name.contains('/') || name.contains("..") || name.contains('\\') {
+        return (StatusCode::BAD_REQUEST, "invalid name").into_response();
+    }
+
+    let ct = match name.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "opus" => "audio/ogg",
+        "webm" => "audio/webm",
+        "flac" => "audio/flac",
+        "aac" | "m4a" => "audio/mp4",
+        _ => "application/octet-stream",
+    };
+
+    let path = sonus_dir().join(&name);
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let total = bytes.len();
+
+    if let Some(range_hdr) = req_headers.get(header::RANGE) {
+        if let Ok(range_str) = range_hdr.to_str() {
+            if let Some(rest) = range_str.strip_prefix("bytes=") {
+                let mut parts = rest.splitn(2, '-');
+                let start = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+                let end   = parts.next()
+                    .and_then(|s| if s.is_empty() { None } else { s.parse::<usize>().ok() })
+                    .unwrap_or(total.saturating_sub(1))
+                    .min(total.saturating_sub(1));
+                if start < total && start <= end {
+                    let body  = bytes[start..=end].to_vec();
+                    let len   = body.len();
+                    return axum::http::Response::builder()
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header(header::CONTENT_TYPE, ct)
+                        .header(header::ACCEPT_RANGES, "bytes")
+                        .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
+                        .header(header::CONTENT_LENGTH, len)
+                        .body(axum::body::Body::from(body))
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ct)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, total)
+        .body(axum::body::Body::from(bytes))
+        .unwrap()
 }
 
 // ── policy rules ─────────────────────────────────────────────────────────────

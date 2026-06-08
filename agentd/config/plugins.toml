@@ -20,3 +20,20 @@ restart = "always"
 id      = "sensor-head"
 cmd     = "/usr/local/bin/sensor-head-mcp"
 restart = "always"
+
+# Sonus — Suno AI music generation via hermes-sonus MCP server
+# Deploy: sudo git clone https://github.com/buckster123/hermes-sonus /opt/sonus
+#         sudo -u agentd python3 -m venv /opt/sonus-venv
+#         sudo -u agentd /opt/sonus-venv/bin/pip install -e "/opt/sonus[mcp]"
+#         sudo tee /usr/local/bin/sonus-mcp > /dev/null << 'EOF'
+#         #!/bin/bash
+#         source /opt/sonus-venv/bin/activate
+#         exec python -m hermes_sonus.mcp.server "$@"
+#         EOF
+#         sudo chmod +x /usr/local/bin/sonus-mcp
+#         echo 'SUNO_API_KEY=your-key-here' | sudo tee -a /etc/agentd/env
+# [[plugin]]
+# id      = "sonus"
+# cmd     = "/usr/local/bin/sonus-mcp"
+# restart = "always"
+# env     = { SUNO_DOWNLOAD_DIR = "/var/lib/agentd/workspace/sonus" }
