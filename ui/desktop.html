@@ -93,6 +93,7 @@
       <button class="sm-item" onclick="launchApp('sketchpad')"><span class="sm-emoji">🎨</span>Sketchpad</button>
       <button class="sm-item" onclick="launchApp('notes')"><span class="sm-emoji">📝</span>Notes</button>
       <button class="sm-item" onclick="launchApp('browser')"><span class="sm-emoji">🌐</span>Browser</button>
+      <button class="sm-item" onclick="launchApp('explorer')"><span class="sm-emoji">📁</span>Explorer</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -194,6 +195,26 @@
       <span id="notes-status" class="notes-status"></span>
     </div>
     <textarea id="notes-editor" class="notes-editor" spellcheck="false" placeholder="// start typing…"></textarea>
+  </div>
+
+  <!-- File Explorer window -->
+  <div id="win-explorer-content" class="win-content explorer-win" style="display:none">
+    <div class="explorer-toolbar">
+      <span id="explorer-path" class="explorer-path-label">/var/lib/agentd/workspace</span>
+      <button class="explorer-btn" onclick="explorerRefresh()" title="Refresh">↺</button>
+      <button class="explorer-btn" onclick="explorerNewDir()" title="New directory">+ Dir</button>
+      <button class="explorer-btn explorer-btn-del" onclick="explorerDelete()" title="Delete selected">🗑</button>
+    </div>
+    <div class="explorer-body">
+      <div class="explorer-tree" id="explorer-tree"></div>
+      <div class="explorer-preview">
+        <div id="explorer-preview-path" class="explorer-preview-path"></div>
+        <pre id="explorer-preview-content" class="explorer-preview-content">Select a file to preview</pre>
+        <div class="explorer-preview-actions" id="explorer-preview-actions" style="display:none">
+          <button class="explorer-btn" onclick="explorerOpenInNotes()">📝 Open in Notes</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Browser window -->

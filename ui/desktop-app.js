@@ -128,6 +128,11 @@ const WIN_DEFAULTS = {
     x: 100, y: 50, width: 900, height: 620,
     background: '#fff',
   },
+  explorer: {
+    title: '📁 Explorer',
+    x: 160, y: 60, width: 780, height: 520,
+    background: 'var(--wb-bg)',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -188,6 +193,7 @@ function openWin(id) {
   if (id === 'terminal') setTimeout(initTerminal, 60);
   if (id === 'notes')     setTimeout(notesInit, 30);
   if (id === 'sketchpad') setTimeout(sketchInit, 30);
+  if (id === 'explorer')  setTimeout(explorerInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -619,6 +625,185 @@ function settingsApp() {
       } catch {}
     },
   };
+}
+
+// ─── File Explorer ───────────────────────────────────────────────────────────
+let explorerRoot     = '/var/lib/agentd/workspace';
+let explorerSelected = null;
+
+function explorerFileIcon(name) {
+  if (/\.(md|txt|log|csv)$/i.test(name))              return '📄';
+  if (/\.(js|ts|rs|py|sh|toml|json|yaml|yml|html|css)$/i.test(name)) return '📜';
+  if (/\.(png|jpg|jpeg|gif|svg|webp)$/i.test(name))   return '🖼';
+  if (/\.(mp3|wav|ogg|flac|opus)$/i.test(name))       return '🎵';
+  return '📄';
+}
+
+async function explorerList(path) {
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `find '${path}' -maxdepth 1 -mindepth 1 -printf "%f\\t%y\\n" 2>&1 | sort` }),
+    });
+    const d = await r.json();
+    if (!d.ok && d.exit_code !== 0) return [];
+    return (d.stdout || '').trim().split('\n').filter(Boolean).map(line => {
+      const tab = line.indexOf('\t');
+      const name = line.slice(0, tab);
+      const type = line.slice(tab + 1).trim();
+      return { name, isDir: type === 'd' };
+    }).sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  } catch { return []; }
+}
+
+async function explorerLoadInto(path, container, depth) {
+  container.innerHTML = '<span class="explorer-loading">loading…</span>';
+  const entries = await explorerList(path);
+  container.innerHTML = '';
+  if (!entries.length) {
+    container.innerHTML = `<span class="explorer-loading" style="padding-left:${depth*16+8}px">(empty)</span>`;
+    return;
+  }
+  for (const e of entries) {
+    const fullPath = path.replace(/\/+$/, '') + '/' + e.name;
+    const row = document.createElement('div');
+    row.className = 'explorer-row';
+    row.style.paddingLeft = (depth * 16 + 8) + 'px';
+    row.dataset.path = fullPath;
+    const iconEl = document.createElement('span');
+    iconEl.className = 'explorer-icon';
+    iconEl.textContent = e.isDir ? '📁' : explorerFileIcon(e.name);
+    const nameEl = document.createElement('span');
+    nameEl.className = 'explorer-name';
+    nameEl.textContent = e.name;
+    row.append(iconEl, nameEl);
+
+    if (e.isDir) {
+      const children = document.createElement('div');
+      children.className = 'explorer-children';
+      children.style.display = 'none';
+      let loaded = false;
+      row.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        explorerSelectRow(row, fullPath, true);
+        if (children.style.display !== 'none') {
+          children.style.display = 'none';
+          iconEl.textContent = '📁';
+        } else {
+          children.style.display = '';
+          iconEl.textContent = '📂';
+          if (!loaded) { loaded = true; await explorerLoadInto(fullPath, children, depth + 1); }
+        }
+      });
+      container.append(row, children);
+    } else {
+      row.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        explorerSelectRow(row, fullPath, false);
+        explorerPreview(fullPath);
+      });
+      container.append(row);
+    }
+  }
+}
+
+function explorerSelectRow(row, path, isDir) {
+  document.querySelectorAll('.explorer-row.selected').forEach(r => r.classList.remove('selected'));
+  row.classList.add('selected');
+  explorerSelected = { path, isDir };
+  const lbl = document.getElementById('explorer-path');
+  if (lbl) lbl.textContent = path;
+}
+
+async function explorerPreview(path) {
+  const pre     = document.getElementById('explorer-preview-content');
+  const pathEl  = document.getElementById('explorer-preview-path');
+  const actions = document.getElementById('explorer-preview-actions');
+  if (!pre) return;
+  if (pathEl) pathEl.textContent = path;
+  pre.textContent = 'loading…';
+  if (actions) actions.style.display = 'none';
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: `head -120 '${path}' 2>&1` }),
+    });
+    const d = await r.json();
+    pre.textContent = d.stdout || d.stderr || '(empty)';
+    if (actions) actions.style.display = '';
+  } catch (e) { pre.textContent = 'error: ' + e; }
+}
+
+async function explorerInit() {
+  // Ensure workspace dir exists
+  await fetch('/api/run', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command: 'mkdir -p /var/lib/agentd/workspace' }),
+  });
+  const tree = document.getElementById('explorer-tree');
+  if (tree) await explorerLoadInto(explorerRoot, tree, 0);
+  const lbl = document.getElementById('explorer-path');
+  if (lbl) lbl.textContent = explorerRoot;
+}
+
+async function explorerRefresh() {
+  explorerSelected = null;
+  const pre = document.getElementById('explorer-preview-content');
+  const actions = document.getElementById('explorer-preview-actions');
+  const pathEl = document.getElementById('explorer-preview-path');
+  if (pre) pre.textContent = 'Select a file to preview';
+  if (actions) actions.style.display = 'none';
+  if (pathEl) pathEl.textContent = '';
+  const lbl = document.getElementById('explorer-path');
+  if (lbl) lbl.textContent = explorerRoot;
+  const tree = document.getElementById('explorer-tree');
+  if (tree) await explorerLoadInto(explorerRoot, tree, 0);
+}
+
+async function explorerNewDir() {
+  const base = (explorerSelected?.isDir ? explorerSelected.path : explorerRoot);
+  const name = prompt('New directory name:');
+  if (!name?.trim()) return;
+  await fetch('/api/run', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command: `mkdir -p '${base}/${name.trim()}'` }),
+  });
+  explorerRefresh();
+}
+
+async function explorerDelete() {
+  if (!explorerSelected) return;
+  if (!confirm(`Delete ${explorerSelected.path}?\n\nThis cannot be undone.`)) return;
+  await fetch('/api/run', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command: `rm -rf '${explorerSelected.path}'` }),
+  });
+  explorerSelected = null;
+  const pre = document.getElementById('explorer-preview-content');
+  const actions = document.getElementById('explorer-preview-actions');
+  const pathEl  = document.getElementById('explorer-preview-path');
+  if (pre) pre.textContent = 'Select a file to preview';
+  if (actions) actions.style.display = 'none';
+  if (pathEl) pathEl.textContent = '';
+  explorerRefresh();
+}
+
+function explorerOpenInNotes() {
+  if (!explorerSelected || explorerSelected.isDir) return;
+  const fn = explorerSelected.path.split('/').pop();
+  fetch('/api/run', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command: `cat '${explorerSelected.path}'` }),
+  }).then(r => r.json()).then(d => {
+    const ed = document.getElementById('notes-editor');
+    const fnInput = document.getElementById('notes-filename');
+    if (fnInput) fnInput.value = fn;
+    if (ed) { ed.value = d.stdout || ''; ed.dispatchEvent(new Event('input')); }
+    openWin('notes');
+  });
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────

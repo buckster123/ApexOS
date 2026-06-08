@@ -610,4 +610,24 @@ html, body {
 .session-empty   { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 #sessions-footer { padding: 8px 16px; border-top: 1px solid var(--border); }
 #sessions-new-btn { background: transparent; color: var(--accent2); border: 1px solid var(--accent2); border-radius: var(--radius-sm); padding: 5px 12px; font-family: var(--mono); font-size: 11px; cursor: pointer; }
+
+/* ─── File Explorer ───────────────────────────────────────────────────────── */
+.explorer-win { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.explorer-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--surface); }
+.explorer-path-label { flex: 1; font-family: var(--mono); font-size: 10px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 3px 9px; border-radius: var(--radius-sm); cursor: pointer; font-size: 11px; font-family: var(--mono); transition: border-color 0.1s; flex-shrink: 0; }
+.explorer-btn:hover { border-color: var(--accent2); color: var(--text-bright); }
+.explorer-btn-del:hover { border-color: var(--accent3); color: var(--accent3); }
+.explorer-body { display: flex; flex: 1; min-height: 0; }
+.explorer-tree { width: 220px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 4px 0; background: var(--surface); }
+.explorer-preview { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+.explorer-preview-path { padding: 5px 10px; font-family: var(--mono); font-size: 10px; color: var(--text-dim); border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; min-height: 24px; }
+.explorer-preview-content { flex: 1; margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 11px; overflow: auto; color: var(--text); white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
+.explorer-preview-actions { padding: 6px 10px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--surface); }
+.explorer-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px; font-family: var(--mono); user-select: none; transition: background 0.08s; }
+.explorer-row:hover { background: var(--surface2); }
+.explorer-row.selected { background: rgba(57,255,20,0.07); color: var(--accent); }
+.explorer-icon { font-size: 12px; flex-shrink: 0; line-height: 1; }
+.explorer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-loading { display: block; padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 #sessions-new-btn:hover { background: rgba(108,138,255,0.1); }
