@@ -85,50 +85,23 @@ so gateway stays decoupled from the policy crate.
 
 ---
 
-## Phase B — System tools (in progress)
+## Phase B — System tools ✓ DONE
 
-**Done this session:**
 - [x] Win7-style start menu (drop-up, two-pane: apps left / settings+power right)
 - [x] Dynamic taskbar — running apps as labeled tabs, appear on openWin, removed on close
 - [x] Minimize-to-taskbar — WinBox `.minimize` hidden via CSS, tab dims to italic, click restores
 - [x] `POST /api/run` gateway endpoint — `sh -c`, 30s timeout, minimal denylist
 - [x] `!cmd` passthrough in CLI + desktop — green `$` turn, stdout/stderr inline
 - [x] Terminal window — xterm.js 4.19.0 + FitAddon bundled; cwd tracking; Ctrl+L
+- [x] `/api/policy/rules` GET — reads live `PolicyEngine` via `Arc<RwLock<PolicyEngine>>` in GatewayState; unlocks Settings → Policy rules table
+- [x] Camera window — `win-camera-content` with Snap/Night buttons; `GET /api/snapshot?night=true` → `rpicam-jpeg` camera 0, 1280×720; returns JPEG; `agentd` added to `video`+`render` groups; blob URL avoids cache
+- [x] Thermal canvas wallpaper — `#thermal-canvas` behind wallpaper logo; 32×24 noise grid (per-cell noise in min/max range); blue→teal→red colour map at α=0.13; `window.updateThermalWallpaper(r)` called from `app.js` on `thermal_frame` events
+- [x] Fixed `policy.toml` TOML bug — sensor-head rules were in `[subagents]` with unquoted values (`allow` instead of `"allow"`), causing parse failure → empty rules
 
-**Remaining Phase B:**
-
-**CLI `!` passthrough + slash commands**
-- `!cmd` prefix in CLI input → intercepted client-side → `/api/run` POST → streams stdout back into chat output
-- Slash commands: `/help`, `/status`, `/sessions` etc. — pure frontend dispatch
-- Same `/api/run` endpoint powers the desktop terminal window
-- Gateway route: `POST /api/run` → calls `run_command` tool directly (bypasses agent turn engine), streams response as SSE
-
-**Terminal window (desktop)**
-- Add `xterm.js` + `xterm-addon-fit.js` to `ui/lib/` (~200KB total)
-- New `terminal` entry in WIN_DEFAULTS + `win-terminal-content` div with `<div id="terminal-xterm">`
-- Option A (simple): wire to `/api/run` — each Enter sends command, stdout streams back. No PTY, no interactive programs.
-- Option B (full): `/terminal-ws` WebSocket endpoint + `tokio-pty` crate → real PTY, interactive programs (vim, top, etc.)
-- Start with Option A; upgrade to B if needed.
-
-**Dock redesign — start menu + minimize-to-taskbar**
-- Remove sticky app icons from dock; replace with a single **⬡ Start** button (bottom-left)
-- Start button opens a drop-up grid of all available apps (agent, sensors, cerebro, sensorhead, settings, terminal, camera, etc.)
-- **Taskbar**: running/minimized apps appear as labeled tabs at the bottom. Tab disappears when app is fully closed.
-- WinBox `.minimize()` already works — wire `onminimize` to add a taskbar tab, `onrestore`/`onclose` to remove it
-- CSS: tabs in `#dock` are dynamically created `<button class="taskbar-tab">` elements
-
-**Camera window**
-- `win-camera-content`: `<img id="camera-snapshot">` + Refresh button
-- Gateway `GET /api/snapshot` → shells `capture_visual` or `capture_night` → returns JPEG bytes directly
-
-**`/api/policy/rules` GET endpoint**
-- Add `policy_arc: Arc<RwLock<PolicyEngine>>` to `GatewayState`
-- Return per-tool rules as JSON → unlocks the rules table in Settings → Policy tab
-
-**Thermal canvas wallpaper**
-- `<canvas id="thermal-canvas">` in `#desktop-wallpaper`
-- `updateThermalWallpaper(frame)` called from sensor_reading events when `kind === 'thermal_frame'`
-- 32×24 pixel grid → colour gradient (cool=blue, hot=red, opacity ~15%)
+**Key discoveries:**
+- `ThermalFrame` events have no pixel array (intentional: "keep events small"). Canvas uses mean±noise in min/max range for visual approximation.
+- `rpicam-jpeg` needs `video`+`render` groups; `agentd` only had `audio`.
+- Policy rules endpoint pattern: add dep to gateway (`apexos-plugins`), store `Arc<RwLock<PolicyEngine>>` in GatewayState, read and serialize on demand.
 
 ---
 
