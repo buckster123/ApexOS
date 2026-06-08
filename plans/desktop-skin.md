@@ -42,7 +42,7 @@ ui/
 | `sketchpad`  | HTML5 canvas          | ✓ Phase D | Pen/eraser/colour, Download PNG      |
 | `browser`    | iframe + URL bar      | ✓ Phase D | Local dashboards, back button        |
 | `ide`        | Monaco editor         | ✓ Phase C | New/Upload/Open/Save, Ctrl+S, lang auto-detect |
-| `sub-agent`  | Second chat panel     | Phase C   | Spawned by agent_spawn virtual tool  |
+| `sub-agent`  | Streaming output      | ✓ Phase C | Auto-spawned by agent_spawn, taskbar entry, ✓ done badge |
 
 ## API routes added (gateway)
 
@@ -125,9 +125,12 @@ so gateway stays decoupled from the policy crate.
 - Explorer `🖥 IDE` button pre-populates `window.ideFile` — file opens with lang set
 - Upload reads local file as text into editor; Save writes it to workspace path
 
-**Sub-agent window** (remaining)
-- `agent_spawn` virtual tool → bus emits `SubAgentStarted { session_id }`
-- Desktop intercepts event, opens a new `agent-{session_id}` WinBox window
+**Sub-agent window** ✓ DONE
+- Added `SubAgentStarted { parent, child, prompt }` event to core + no-op in state.apply()
+- Emitted from main.rs immediately after child_id is created
+- app.js: widened session filter to include watched child sessions; routes `agent_text`/`turn_complete` to child output div
+- desktop-app.js: `openSubAgentWin(ev)` dynamically creates WinBox with streaming output + status badge
+- Window appears automatically when agent calls `agent_spawn` tool; registered in taskbar
 
 ---
 
