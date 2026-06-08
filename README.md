@@ -118,36 +118,21 @@ The Pi 5 specifically matters: sub-second whisper.cpp transcription, 0.13× real
 
 ---
 
-## Quick start
+## Install
 
-> Detailed deploy notes in `docs/claude/pi-deploy.md`. This is the condensed path.
-
-```bash
-# 1. Clone on Pi
-git clone https://github.com/buckster123/ApexOS
-cd ApexOS
-
-# 2. Build (on Pi — do not cross-compile)
-cd agentd && cargo build --release
-
-# 3. Configure
-sudo cp agentd/config/plugins.toml agentd/config/policy.toml /etc/agentd/
-echo "ANTHROPIC_API_KEY=sk-ant-..." | sudo tee /etc/agentd/env
-
-# 4. Install systemd service
-sudo cp deploy/agentd.service /etc/systemd/system/
-sudo systemctl enable --now agentd
-
-# 5. Open browser → http://<pi-ip>:8787
+**Pi Imager (zero-touch)** — flash a fresh card and paste this into *"Run custom script on first boot"*:
 ```
-
-```bash
-# Optional: voice I/O
-bash deploy/setup-voice.sh        # installs ffmpeg, whisper.cpp, piper
-sudo cp deploy/apex-wake.service /etc/systemd/system/
-sudo cp deploy/apex-wake.py /opt/apex-wake/wake.py
-sudo systemctl enable --now apex-wake
+https://raw.githubusercontent.com/buckster123/ApexOS/main/firstrun.sh
 ```
+The Pi installs everything on first boot and reboots. Access at `http://apexos.local:8787`.
+
+**One-liner** — SSH into a running Pi:
+```bash
+curl -fsSL https://raw.githubusercontent.com/buckster123/ApexOS/main/install.sh | sudo bash
+```
+Detects your hardware (mic, camera, sensors), asks a few questions, starts the service.
+
+**Full manual** — see [`docs/install.md`](docs/install.md)
 
 ---
 

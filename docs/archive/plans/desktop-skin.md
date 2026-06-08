@@ -1,0 +1,205 @@
+# Desktop Skin — WinBox OS Shell
+
+## Architecture
+
+Single HTML page (`desktop.html`) served by agentd at `/desktop.html`.
+Shares all WebSocket machinery with the CLI skin (`app.js`). Desktop-specific
+logic lives in `desktop-app.js` (loaded after `app.js`, overrides
+`transitionToApp()`). Libraries bundled locally in `ui/lib/` — no CDN at runtime.
+
+```
+ui/
+  desktop.html        — shell: topbar, dock, win-content divs (hidden until WinBox mounts)
+  desktop-app.js      — window manager (openWin/closeWin/toggleWin), settingsApp() Alpine
+  desktop-style.css   — OS shell styles (.wb-apexos WinBox theme, topbar, dock, windows)
+  app.js              — shared WS engine (sensor readings, turn engine, approval UX)
+  lib/
+    winbox.min.js     — WinBox 0.2.82 (~10KB)
+    winbox.min.css    — WinBox base styles
+    alpine.min.js     — Alpine.js 3.x (~45KB)
+```
+
+**Key rules:**
+- All element IDs referenced by `app.js` MUST exist in `desktop.html`
+  (use hidden spans for ones not visually needed on desktop)
+- `window.pluginCounts` must be on `window` (not `const`) so desktop-app.js can read it
+- Iframe `src` must be absent or empty string — use `getAttribute('src')` not `iframe.src`
+  to check if loaded (the IDL property resolves empty string to current page URL)
+- `~` in sudo bash -c expands to root's home — always use absolute paths (`/home/apexos/...`)
+
+## Window types
+
+| Window ID    | Content               | Status    | Notes                                |
+|------------- | --------------------- | --------- | ------------------------------------ |
+| `agent`      | Chat panel (app.js)   | ✓ Phase A | Auto-opens at boot, non-closeable TBD|
+| `sensors`    | Live sensor widget    | ✓ Phase A | Auto-opens at boot                   |
+| `cerebro`    | iframe :8767/ui       | ✓ Phase A | Lazy src load on open                |
+| `sensorhead` | iframe :8080          | ✓ Phase A | Lazy src load on open                |
+| `settings`   | Alpine form           | ✓ Phase A | Soul editor, policy mode, plugin list|
+| `terminal`   | xterm.js + run_command| ✓ Phase B | cwd tracking, Ctrl+L                 |
+| `camera`     | rpicam-jpeg snapshot  | ✓ Phase B | Snap / Night mode, 1280×720          |
+| `notes`      | textarea + localStorage| ✓ Phase D | Auto-save + server persist           |
+| `sketchpad`  | HTML5 canvas          | ✓ Phase D | Pen/eraser/colour, Download PNG      |
+| `browser`    | iframe + URL bar      | ✓ Phase D | Local dashboards, back button        |
+| `ide`        | Monaco editor         | ✓ Phase C | New/Upload/Open/Save, Ctrl+S, lang auto-detect |
+| `sub-agent`  | Streaming output      | ✓ Phase C | Auto-spawned by agent_spawn, taskbar entry, ✓ done badge |
+
+## API routes added (gateway)
+
+| Route              | Method | Purpose                              |
+| ------------------ | ------ | ------------------------------------ |
+| `/api/soul`        | GET    | Read soul.md content                 |
+| `/api/soul`        | POST   | Write soul.md content                |
+| `/api/policy`      | POST   | Live-switch policy mode (suggest / auto-edit / yolo) |
+| `/api/policy/rules`| GET    | Per-tool rules table (**Phase B**)   |
+
+Policy mode stored as `Arc<RwLock<String>>` in GatewayState, mutated via mpsc channel
+so gateway stays decoupled from the policy crate.
+
+---
+
+## Phase A — Windowed shell ✓ DONE
+
+- [x] WinBox + Alpine bundled locally (`ui/lib/`)
+- [x] `desktop.html`: topbar (clock, model, policy selectors, WS status, CLI/power btns)
+- [x] `desktop.html`: dock (Agent, Sensors, Cerebro, SensorHead, Settings)
+- [x] `desktop.html`: win-content divs for all windows (hidden, WinBox mounts them)
+- [x] `desktop-app.js`: `openWin` / `closeWin` / `toggleWin` / `dockMark`
+- [x] `desktop-app.js`: auto-opens Agent + Sensors at boot
+- [x] `desktop-app.js`: lazy iframe load for Cerebro (:8767) and SensorHead (:8080)
+- [x] `desktop-app.js`: `settingsApp()` — soul editor, policy mode switcher, plugin list
+- [x] `desktop-style.css`: full OS shell stylesheet, `.wb-apexos` WinBox theme
+- [x] `app.js`: `window.pluginCounts` (was `const`, not accessible cross-script)
+- [x] `app.js`: `switchSkin()` for CLI↔Desktop toggle button
+- [x] `ui/app.js` + `ui/index.html`: policy live selector (was read-only badge)
+- [x] `agentd/deploy/cerebro-api.service`: CerebroCortex dashboard at boot port 8767
+- [x] Gateway: `/api/soul` GET+POST, `/api/policy` POST, `lib/` static file serving
+
+**Known issues fixed:**
+- `hdr-logo` / `hdr-sessions` missing from desktop.html → null.addEventListener crash, boot never started
+- `iframe.src` vs `iframe.getAttribute('src')` — empty src="" resolves to page URL, Cerebro/SensorHead iframes never loaded
+- `const pluginCounts` → `window.pluginCounts` — const is script-scoped, not visible cross-script
+- `let bootDone` → `var bootDone` — let is script-scoped, desktop-app.js couldn't set it, enableInput never called, chat input stayed disabled
+- Removed `Object.defineProperty(window,'bootDone',...)` hack — was correctly intercepting the let variable, now unnecessary with var
+- Win-content divs started `display:block` in body (outside #app) → inflated body height → flex column miscalculated, dock appeared to fill half screen. Fix: `display:none` until openWin mounts them
+- `#desktop-canvas { min-height: 0 }` — flex:1 child needs explicit min-height:0 to shrink below content size in column layout
+- `fonts-noto-color-emoji` installed on Pi — dock emoji icons invisible in cage kiosk without it
+- Logo dblclick → sessions modal (server-side) not history modal (localStorage apexos_history never written)
+
+---
+
+## Phase B — System tools ✓ DONE
+
+- [x] Win7-style start menu (drop-up, two-pane: apps left / settings+power right)
+- [x] Dynamic taskbar — running apps as labeled tabs, appear on openWin, removed on close
+- [x] Minimize-to-taskbar — WinBox `.minimize` hidden via CSS, tab dims to italic, click restores
+- [x] `POST /api/run` gateway endpoint — `sh -c`, 30s timeout, minimal denylist
+- [x] `!cmd` passthrough in CLI + desktop — green `$` turn, stdout/stderr inline
+- [x] Terminal window — xterm.js 4.19.0 + FitAddon bundled; cwd tracking; Ctrl+L
+- [x] `/api/policy/rules` GET — reads live `PolicyEngine` via `Arc<RwLock<PolicyEngine>>` in GatewayState; unlocks Settings → Policy rules table
+- [x] Camera window — `win-camera-content` with Snap/Night buttons; `GET /api/snapshot?night=true` → `rpicam-jpeg` camera 0, 1280×720; returns JPEG; `agentd` added to `video`+`render` groups; blob URL avoids cache
+- [x] Thermal canvas wallpaper — `#thermal-canvas` behind wallpaper logo; 32×24 noise grid (per-cell noise in min/max range); blue→teal→red colour map at α=0.13; `window.updateThermalWallpaper(r)` called from `app.js` on `thermal_frame` events
+- [x] Fixed `policy.toml` TOML bug — sensor-head rules were in `[subagents]` with unquoted values (`allow` instead of `"allow"`), causing parse failure → empty rules
+
+**Key discoveries:**
+- `ThermalFrame` events have no pixel array (intentional: "keep events small"). Canvas uses mean±noise in min/max range for visual approximation.
+- `rpicam-jpeg` needs `video`+`render` groups; `agentd` only had `audio`.
+- Policy rules endpoint pattern: add dep to gateway (`apexos-plugins`), store `Arc<RwLock<PolicyEngine>>` in GatewayState, read and serialize on demand.
+
+---
+
+## Phase C — Full OS feel
+
+**Multi-wallpaper** ✓ DONE
+- [x] Wallpaper picker in Settings → Desktop tab: Thermal / Logo / Minimal
+- [x] `applyWallpaper(mode)` shows/hides `#thermal-canvas`, adjusts logo opacity
+- [x] Persisted in localStorage, restored at boot in `transitionToApp()`
+- [ ] Dark/light theme toggle (deferred — needs full CSS var override pass)
+
+**IDE window** ✓ DONE
+- Monaco 0.55.1 downloaded as tarball (no npm), bundled in `ui/lib/monaco/vs/` (~16MB)
+- Toolbar: `+ New`, `⬆ Upload`, path input, Open, lang badge, `💾 Save`
+- `automaticLayout: true` — resizes with WinBox drag
+- Ctrl+S saves via `printf '%s'` to server path
+- Language auto-detected from extension (Rust, Python, JS/TS, JSON, YAML, Shell, Go, Markdown, +30 more)
+- Explorer `🖥 IDE` button pre-populates `window.ideFile` — file opens with lang set
+- Upload reads local file as text into editor; Save writes it to workspace path
+
+**Sub-agent window** ✓ DONE
+- Added `SubAgentStarted { parent, child, prompt }` event to core + no-op in state.apply()
+- Emitted from main.rs immediately after child_id is created
+- app.js: widened session filter to include watched child sessions; routes `agent_text`/`turn_complete` to child output div
+- desktop-app.js: `openSubAgentWin(ev)` dynamically creates WinBox with streaming output + status badge
+- Window appears automatically when agent calls `agent_spawn` tool; registered in taskbar
+
+---
+
+## Phase D — App ecosystem
+
+**Notes / Notepad window** ✓ DONE
+- [x] Textarea with filename input; localStorage auto-save on every keystroke
+- [x] Save button → `printf '%s' 'content' > /var/lib/agentd/workspace/<file>` via `/api/run`
+- [x] `notesInit()` called 30ms after WinBox mount
+
+**Sketchpad window** ✓ DONE
+- [x] HTML5 canvas, pen/eraser/clear, colour picker, stroke size slider
+- [x] Download PNG → `canvas.toDataURL()` → anchor click (client-side, no server)
+- [x] Touch-action:none for tablet drawing; `sketchCtx` module-level survives resize
+
+**Browser / Webview window** ✓ DONE
+- [x] iframe + URL bar + back button
+- [x] sandbox: allow-scripts/same-origin/forms/popups
+- [x] Default URL `localhost:8080` (SensorHead); good for any local dashboard
+
+**File explorer window** ✓ DONE
+- Two-pane: lazy-expanding tree on left (via `find -printf`), preview on right (head -120 lines)
+- Toolbar: ↺ Refresh, + Dir, ⬆ Upload (base64 write), 🗑 Delete
+- Preview actions: 📝 Notes (load into notes editor), 🖥 IDE (pre-populates `window.ideFile`)
+
+---
+
+## Phase E — Sonus / Media
+
+See `plans/sonus-plugin.md` for full detail.
+
+**Hermes Sonus MCP port** (Python, low effort — already a FastMCP server)
+- Clone `buckster123/hermes-sonus` on Pi → venv → `pip install "hermes-sonus[mcp]"`
+- Entry point: `hermes-sonus-mcp` (stdio transport, same pattern as CerebroCortex)
+- Register in `agentd/config/plugins.toml`; set `SUNO_API_KEY` in `/etc/agentd/env`
+- ~10 tools: `generate_song`, `check_status`, `download_track`, `extend_track`,
+  `generate_lyrics`, `clone_voice_*`, `check_credits`, `generate_album`
+- EEG layer (OpenBCI) deferred — skip for now
+
+**Media player window**
+- `win-player-content`: track list + waveform/progress bar + play/pause/skip controls
+- Agent calls `generate_song` → polls `check_status` → `download_track` to `/var/lib/agentd/workspace/sonus/`
+- Gateway serves `/api/sonus/files` → returns file list; player fetches and plays via HTML `<audio>`
+- Agent DJ: agent can queue next track based on context, sensor data, or user prompt
+
+---
+
+## Deploy reference
+
+```bash
+# Standard cycle (always git-first):
+git add ... && git commit -m "..." && git push
+
+# On Pi:
+cd ~/ApexOS && git pull
+cd agentd && ~/.cargo/bin/cargo build --release
+
+# Deploy binary:
+sudo systemctl stop agentd
+sudo cp /home/apexos/ApexOS/agentd/target/release/agentd /usr/local/bin/agentd
+sudo systemctl start agentd
+
+# Deploy UI only (no binary change):
+sudo cp /home/apexos/ApexOS/ui/*.js   /var/lib/agentd/ui/
+sudo cp /home/apexos/ApexOS/ui/*.css  /var/lib/agentd/ui/
+sudo cp /home/apexos/ApexOS/ui/*.html /var/lib/agentd/ui/
+sudo cp /home/apexos/ApexOS/ui/lib/*  /var/lib/agentd/ui/lib/
+sudo chown -R agentd:agentd /var/lib/agentd/ui/
+```
+
+Note: `~` inside `sudo bash -c "..."` expands to root's home. Always use
+`/home/apexos/...` absolute paths.
