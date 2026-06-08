@@ -19,18 +19,19 @@ impl RoutingProvider {
     pub fn new(
         backend:      Arc<RwLock<String>>,
         oai_base_url: Arc<RwLock<String>>,
-        api_key:      Arc<RwLock<String>>,
+        anthropic_key: Arc<RwLock<String>>,
+        oai_api_key:  Arc<RwLock<String>>,
         model:        Arc<RwLock<String>>,
     ) -> Self {
         Self {
             backend,
             anthropic: AnthropicProvider::new_shared(
-                Arc::clone(&api_key),
+                Arc::clone(&anthropic_key),
                 Arc::clone(&model),
             ),
             oai: OaiProvider::new(
                 oai_base_url,
-                api_key,
+                oai_api_key,
                 model,
             ),
         }

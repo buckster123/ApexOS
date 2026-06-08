@@ -574,6 +574,9 @@ function settingsApp() {
     rules: [],
     plugins: [],
     wallpaper: localStorage.getItem('apexos_wallpaper') || 'thermal',
+    // Keys tab
+    antKey: '', antKeySet: false, antKeySaving: false, antKeySaved: false,
+    oaiKey: '', oaiKeySet: false, oaiKeySaving: false, oaiKeySaved: false,
 
     async init() {
       // Load soul.md
@@ -595,6 +598,14 @@ function settingsApp() {
         const r = await fetch('/api/policy/rules');
         const d = await r.json();
         if (d.rules) this.rules = Object.entries(d.rules);
+      } catch {}
+
+      // Keys status
+      try {
+        const r = await fetch('/api/keys');
+        const d = await r.json();
+        this.antKeySet = !!d.anthropic_set;
+        this.oaiKeySet = !!d.oai_set;
       } catch {}
 
       // Poll plugin counts from app.js global
@@ -641,6 +652,36 @@ function settingsApp() {
         const sel = document.getElementById('policy-select');
         if (sel) { sel.value = mode; setPolicySelect(mode); }
       } catch {}
+    },
+
+    async saveAntKey() {
+      if (!this.antKey) return;
+      this.antKeySaving = true; this.antKeySaved = false;
+      try {
+        const r = await fetch('/api/keys', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ anthropic: this.antKey }),
+        });
+        const d = await r.json();
+        if (d.ok) { this.antKeySet = true; this.antKeySaved = true; this.antKey = ''; setTimeout(() => this.antKeySaved = false, 3000); }
+      } catch {}
+      this.antKeySaving = false;
+    },
+
+    async saveOaiKey() {
+      if (!this.oaiKey) return;
+      this.oaiKeySaving = true; this.oaiKeySaved = false;
+      try {
+        const r = await fetch('/api/keys', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ oai: this.oaiKey }),
+        });
+        const d = await r.json();
+        if (d.ok) { this.oaiKeySet = true; this.oaiKeySaved = true; this.oaiKey = ''; setTimeout(() => this.oaiKeySaved = false, 3000); }
+      } catch {}
+      this.oaiKeySaving = false;
     },
   };
 }

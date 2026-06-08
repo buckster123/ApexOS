@@ -23,7 +23,10 @@ use tokio::sync::mpsc;
 pub struct GatewayState {
     pub bus:                   BusHandle,
     pub bcast:                 broadcast::Sender<Event>,
+    /// Anthropic API key — set via env or browser UI key-entry flow
     pub api_key:               Arc<RwLock<String>>,
+    /// OAI-compatible key (OpenRouter / Together / etc.) — separate from Anthropic key
+    pub oai_api_key:           Arc<RwLock<String>>,
     pub model:                 Arc<RwLock<String>>,
     /// Active inference backend — live-swappable: "anthropic" | "ollama" | "vllm" | "openrouter"
     pub backend:               Arc<RwLock<String>>,
@@ -49,6 +52,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/sensor-bridge",   get(sensor_bridge_ws_handler))
         .route("/api/status",      get(status_handler))
         .route("/api/key",      post(set_key_handler))
+        .route("/api/keys",     get(get_keys_handler).post(set_keys_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
         .route("/api/models",   get(get_models_handler))
         .route("/api/backend",  get(get_backend_handler).post(set_backend_handler))
@@ -256,12 +260,14 @@ async fn static_handler(
 
 async fn status_handler(State(state): State<GatewayState>) -> impl IntoResponse {
     let key_set     = !state.api_key.read().await.is_empty();
+    let oai_key_set = !state.oai_api_key.read().await.is_empty();
     let model       = state.model.read().await.clone();
     let policy_mode = state.policy_mode.read().await.clone();
     Json(serde_json::json!({
-        "api_key_set":  key_set,
-        "model":        model,
-        "policy_mode":  policy_mode,
+        "api_key_set":     key_set,
+        "oai_key_set":     oai_key_set,
+        "model":           model,
+        "policy_mode":     policy_mode,
     }))
 }
 
@@ -316,6 +322,38 @@ async fn set_key_handler(
     Json(serde_json::json!({ "ok": true }))
 }
 
+async fn get_keys_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "anthropic_set": !state.api_key.read().await.is_empty(),
+        "oai_set":       !state.oai_api_key.read().await.is_empty(),
+    }))
+}
+
+async fn set_keys_handler(
+    State(state): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Some(key) = body["anthropic"].as_str() {
+        let key = key.trim().to_string();
+        if !key.is_empty() {
+            *state.api_key.write().await = key.clone();
+            let path = std::env::var("AGENTD_KEY_FILE")
+                .unwrap_or_else(|_| "/var/lib/agentd/.api_key".into());
+            let _ = tokio::fs::write(&path, &key).await;
+        }
+    }
+    if let Some(key) = body["oai"].as_str() {
+        let key = key.trim().to_string();
+        if !key.is_empty() {
+            *state.oai_api_key.write().await = key.clone();
+            let path = std::env::var("AGENTD_OAI_KEY_FILE")
+                .unwrap_or_else(|_| "/var/lib/agentd/.oai_api_key".into());
+            let _ = tokio::fs::write(&path, &key).await;
+        }
+    }
+    Json(serde_json::json!({ "ok": true }))
+}
+
 async fn get_model_handler(State(state): State<GatewayState>) -> impl IntoResponse {
     let model = state.model.read().await.clone();
     Json(serde_json::json!({ "model": model }))
@@ -343,7 +381,7 @@ async fn get_models_handler(State(state): State<GatewayState>) -> impl IntoRespo
 
     // OAI-compatible backend: query {base_url}/models for live model list
     let models_url = format!("{}/models", oai_base.trim_end_matches('/'));
-    let api_key = state.api_key.read().await.clone();
+    let api_key = state.oai_api_key.read().await.clone();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()

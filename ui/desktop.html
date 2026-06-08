@@ -294,6 +294,7 @@
       <button :class="tab==='policy' && 'active'" @click="tab='policy'">Policy</button>
       <button :class="tab==='plugins' && 'active'" @click="tab='plugins'">Plugins</button>
       <button :class="tab==='desktop' && 'active'" @click="tab='desktop'">Desktop</button>
+      <button :class="tab==='keys' && 'active'" @click="tab='keys'">Keys</button>
     </div>
 
     <!-- Soul.md editor -->
@@ -358,6 +359,37 @@
         <button class="wp-btn" :class="wallpaper==='minimal' && 'active'" @click="setWallpaper('minimal')">
           <span class="wp-icon">▪</span>Minimal
         </button>
+      </div>
+    </div>
+
+    <!-- API Keys -->
+    <div class="settings-pane" x-show="tab==='keys'">
+      <div class="settings-desc">API keys are stored on-device and never sent to third parties.</div>
+
+      <div class="key-row-settings">
+        <div class="key-label-settings">Anthropic</div>
+        <div class="key-status" :class="antKeySet ? 'key-ok' : 'key-missing'" x-text="antKeySet ? '● SET' : '○ NOT SET'"></div>
+        <input class="key-input-settings" type="password" x-model="antKey"
+               placeholder="sk-ant-api03-…" autocomplete="off" spellcheck="false">
+        <button class="btn-save key-save-btn" @click="saveAntKey()"
+                :disabled="antKeySaving || !antKey">
+          <span x-text="antKeySaving ? 'SAVING…' : antKeySaved ? '✓' : 'SAVE'"></span>
+        </button>
+      </div>
+
+      <div class="key-row-settings" style="margin-top:14px">
+        <div class="key-label-settings">OAI / OpenRouter</div>
+        <div class="key-status" :class="oaiKeySet ? 'key-ok' : 'key-missing'" x-text="oaiKeySet ? '● SET' : '○ NOT SET'"></div>
+        <input class="key-input-settings" type="password" x-model="oaiKey"
+               placeholder="sk-or-… or leave blank for Ollama" autocomplete="off" spellcheck="false">
+        <button class="btn-save key-save-btn" @click="saveOaiKey()"
+                :disabled="oaiKeySaving || !oaiKey">
+          <span x-text="oaiKeySaving ? 'SAVING…' : oaiKeySaved ? '✓' : 'SAVE'"></span>
+        </button>
+      </div>
+
+      <div class="settings-desc" style="margin-top:10px;font-size:10px;opacity:0.5">
+        Ollama / vllm run locally and don't need a key. OpenRouter requires an sk-or-… key.
       </div>
     </div>
   </div>

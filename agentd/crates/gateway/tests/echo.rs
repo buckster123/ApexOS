@@ -16,6 +16,7 @@ fn make_state(handle: apexos_core::BusHandle, bcast: tokio::sync::broadcast::Sen
         bus:                  handle,
         bcast,
         api_key:              Arc::new(tokio::sync::RwLock::new(String::new())),
+        oai_api_key:          Arc::new(tokio::sync::RwLock::new(String::new())),
         model:                Arc::new(tokio::sync::RwLock::new("claude-opus-4-8".into())),
         backend:              Arc::new(tokio::sync::RwLock::new("anthropic".into())),
         oai_base_url:         Arc::new(tokio::sync::RwLock::new("http://localhost:11434/v1".into())),

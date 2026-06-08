@@ -62,6 +62,22 @@ fn load_api_key() -> String {
     String::new()
 }
 
+fn load_oai_api_key() -> String {
+    // Prefer OAI_API_KEY; OPENROUTER_API_KEY is an alias for convenience
+    for var in ["OAI_API_KEY", "OPENROUTER_API_KEY"] {
+        if let Ok(k) = std::env::var(var) {
+            if !k.is_empty() { return k; }
+        }
+    }
+    let path = std::env::var("AGENTD_OAI_KEY_FILE")
+        .unwrap_or_else(|_| "/var/lib/agentd/.oai_api_key".into());
+    if let Ok(k) = std::fs::read_to_string(&path) {
+        let k = k.trim().to_string();
+        if !k.is_empty() { return k; }
+    }
+    String::new()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let (bus, handle, bcast) = Bus::new(SystemState::default());
@@ -73,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("[agentd] ANTHROPIC_API_KEY not set — enter via browser UI at :8787");
     }
     let api_key_arc = Arc::new(RwLock::new(api_key_str));
+    let oai_api_key_str = load_oai_api_key();
+    let oai_api_key_arc = Arc::new(RwLock::new(oai_api_key_str));
     let backend_str = std::env::var("AGENTD_BACKEND").unwrap_or_else(|_| "anthropic".into());
     let oai_base_url_str = std::env::var("AGENTD_OAI_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434/v1".into());
@@ -155,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
         bus:                  handle.clone(),
         bcast:                bcast.clone(),
         api_key:              Arc::clone(&api_key_arc),
+        oai_api_key:          Arc::clone(&oai_api_key_arc),
         model:                Arc::clone(&model_arc),
         backend:              Arc::clone(&backend_arc),
         oai_base_url:         Arc::clone(&oai_base_url_arc),
@@ -208,6 +227,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&backend_arc),
             Arc::clone(&oai_base_url_arc),
             Arc::clone(&api_key_arc),
+            Arc::clone(&oai_api_key_arc),
             Arc::clone(&model_arc),
         ),
         16,
