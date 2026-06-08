@@ -326,40 +326,25 @@ function initTerminal() {
     return;
   }
   const container = document.getElementById('terminal-xterm');
-  console.log('[term] init — container:', container, 'w:', container?.clientWidth, 'h:', container?.clientHeight);
-  console.log('[term] window.Terminal:', typeof window.Terminal, 'FitAddon:', typeof window.FitAddon);
-  if (!container || typeof window.Terminal === 'undefined') {
-    console.warn('[term] early exit — missing container or Terminal');
-    return;
-  }
+  if (!container || typeof window.Terminal === 'undefined') return;
 
-  try {
-    term = new window.Terminal({
-      theme: {
-        background: '#0d0f18', foreground: '#c8cdd8', cursor: '#39ff14',
-        cursorAccent: '#0d0f18', selectionBackground: 'rgba(108,138,255,0.3)',
-        black: '#131620',   red: '#ff6b6b',   green: '#39ff14',  yellow: '#f0b429',
-        blue: '#6c8aff',    magenta: '#ff79c6', cyan: '#8be9fd', white: '#c8cdd8',
-        brightBlack: '#606680', brightGreen: '#5fffad',
-      },
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
-      fontSize: 13, lineHeight: 1.4, cursorBlink: true, allowTransparency: true,
-    });
-    termFit = new window.FitAddon.FitAddon();
-    term.loadAddon(termFit);
-    term.open(container);
-    console.log('[term] opened — cols:', term.cols, 'rows:', term.rows);
-  } catch(e) {
-    console.error('[term] open error:', e);
-    return;
-  }
-  setTimeout(() => {
-    try { termFit.fit(); console.log('[term] fit1 — cols:', term.cols, 'rows:', term.rows); } catch(e) { console.warn('[term] fit1 error:', e); }
-  }, 80);
-  setTimeout(() => { console.log('[term] connecting WS'); termConnectWs(); }, 100);
-  setTimeout(() => {
-    try { termFit.fit(); console.log('[term] fit2 — cols:', term.cols, 'rows:', term.rows); } catch(e) {}
-  }, 400);
+  term = new window.Terminal({
+    theme: {
+      background: '#0d0f18', foreground: '#c8cdd8', cursor: '#39ff14',
+      cursorAccent: '#0d0f18', selectionBackground: 'rgba(108,138,255,0.3)',
+      black: '#131620',   red: '#ff6b6b',   green: '#39ff14',  yellow: '#f0b429',
+      blue: '#6c8aff',    magenta: '#ff79c6', cyan: '#8be9fd', white: '#c8cdd8',
+      brightBlack: '#606680', brightGreen: '#5fffad',
+    },
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+    fontSize: 13, lineHeight: 1.4, cursorBlink: true, allowTransparency: true,
+  });
+  termFit = new window.FitAddon.FitAddon();
+  term.loadAddon(termFit);
+  term.open(container);
+  setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 80);
+  setTimeout(() => { termConnectWs(); }, 100);
+  setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 400);
 
   term.onResize(({ cols, rows }) => {
     if (termWs && termWs.readyState === 1)
@@ -373,12 +358,9 @@ function initTerminal() {
 
 function termConnectWs() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/terminal-ws`;
-  console.log('[term] WS connecting to', url);
-  termWs = new WebSocket(url);
+  termWs = new WebSocket(`${proto}//${location.host}/terminal-ws`);
   termWs.binaryType = 'arraybuffer';
   termWs.onopen = () => {
-    console.log('[term] WS open — sending resize', term.cols, term.rows);
     term.writeln('\x1b[32m▸ Terminal connected\x1b[0m');
     termWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
   };
@@ -386,11 +368,10 @@ function termConnectWs() {
     if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
     else term.write(e.data);
   };
-  termWs.onclose = (ev) => {
-    console.log('[term] WS closed', ev.code, ev.reason);
+  termWs.onclose = () => {
     if (term) term.writeln('\r\n\x1b[31m▸ disconnected\x1b[0m');
   };
-  termWs.onerror = (ev) => { console.error('[term] WS error', ev); };
+  termWs.onerror = () => {};
 }
 
 // ─── Sketchpad ────────────────────────────────────────────────────────────────
