@@ -31,6 +31,8 @@ pub enum SupervisorCmd {
     SetSoulArc  { arc: Arc<RwLock<String>> },
     /// Wire the scheduler op channel so schedule_* tools route to the scheduler task.
     SetScheduleTx { tx: mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)> },
+    /// Wire the council op channel so convene_council routes to the council handler.
+    SetCouncilTx  { tx: mpsc::Sender<(SessionId, ActionId, serde_json::Value)> },
 }
 
 /// Thin handle for calling plugin tools directly from non-agent code (e.g. the
@@ -70,6 +72,8 @@ pub struct Supervisor {
     rollback_tx:       Option<mpsc::Sender<(SessionId, ActionId, EvolutionId)>>,
     /// Set by main.rs so schedule_* tools route to the scheduler task.
     schedule_tx:       Option<mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)>>,
+    /// Set by main.rs so convene_council routes to the council handler.
+    council_tx:        Option<mpsc::Sender<(SessionId, ActionId, serde_json::Value)>>,
     /// Shared with engine so read_soul_md returns the live system prompt.
     soul_arc:          Option<Arc<RwLock<String>>>,
 }
@@ -89,6 +93,7 @@ impl Supervisor {
             rollback_tx:       None,
             soul_arc:          None,
             schedule_tx:       None,
+            council_tx:        None,
         }
     }
 
@@ -105,6 +110,11 @@ impl Supervisor {
     /// Wires the scheduler channel so schedule_* tools route to the scheduler task.
     pub fn set_schedule_tx(&mut self, tx: mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)>) {
         self.schedule_tx = Some(tx);
+    }
+
+    /// Wires the council channel so convene_council routes to the council handler.
+    pub fn set_council_tx(&mut self, tx: mpsc::Sender<(SessionId, ActionId, serde_json::Value)>) {
+        self.council_tx = Some(tx);
     }
 
     /// Shares the live soul.md Arc so `read_soul_md` returns current content.
@@ -226,6 +236,9 @@ impl Supervisor {
                         }
                         SupervisorCmd::SetScheduleTx { tx } => {
                             self.schedule_tx = Some(tx);
+                        }
+                        SupervisorCmd::SetCouncilTx { tx } => {
+                            self.council_tx = Some(tx);
                         }
                         SupervisorCmd::DirectCall { tool, args, reply } => {
                             if let Some(pid) = self.tool_registry.get(&tool).cloned() {
@@ -407,6 +420,37 @@ impl Supervisor {
                             session,
                             call: call_id,
                             output: ToolOutput { ok: false, content: serde_json::json!("scheduler not initialized") },
+                        }).await;
+                    });
+                }
+            }
+            return;
+        }
+
+        // Virtual tool: convene_council — routes to the council handler task.
+        if call.tool == "convene_council" {
+            let call_id = call.id;
+            let args    = call.args.clone();
+            let bus     = self.bus.clone();
+            match &self.council_tx {
+                Some(tx) => {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if tx.send((session, call_id, args)).await.is_err() {
+                            bus.emit(Event::ToolResult {
+                                session,
+                                call: call_id,
+                                output: ToolOutput { ok: false, content: serde_json::json!("council handler not available") },
+                            }).await;
+                        }
+                    });
+                }
+                None => {
+                    tokio::spawn(async move {
+                        bus.emit(Event::ToolResult {
+                            session,
+                            call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!("council not initialized") },
                         }).await;
                     });
                 }

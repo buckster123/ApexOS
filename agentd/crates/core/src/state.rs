@@ -82,6 +82,14 @@ impl SystemState {
 
             Event::WakeTriggered => {}
 
+            Event::CouncilStarted    { .. } => {}
+            Event::CouncilRoundStart { .. } => {}
+            Event::CouncilAgentDelta { .. } => {}
+            Event::CouncilAgentDone  { .. } => {}
+            Event::CouncilRoundDone  { .. } => {}
+            Event::CouncilComplete   { .. } => {}
+            Event::CouncilButtIn     { .. } => {}
+
             Event::Error { .. } => {}
 
             // Evolution events are handled by the async evolution layer.

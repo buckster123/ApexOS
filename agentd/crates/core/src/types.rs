@@ -105,6 +105,18 @@ pub enum SensorReading {
     },
 }
 
+// ── Council types ────────────────────────────────────────────────────────────
+
+/// One participant in a council session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CouncilAgentDef {
+    pub id:      String,
+    pub persona: String,
+    pub backend: Option<String>,  // "anthropic" | "ollama" | ... — inherits system default if None
+    pub model:   Option<String>,
+    pub color:   Option<String>,  // hex for UI
+}
+
 // ── The central event enum ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +167,16 @@ pub enum Event {
     WakeTriggered,
 
     // ── system ────────────────────────────────────────────
+    // council
+    CouncilStarted    { council_id: String, topic: String, agents: Vec<CouncilAgentDef> },
+    CouncilRoundStart { council_id: String, round: u32 },
+    CouncilAgentDelta { council_id: String, round: u32, agent_id: String, delta: String },
+    CouncilAgentDone  { council_id: String, round: u32, agent_id: String, full_text: String },
+    CouncilRoundDone  { council_id: String, round: u32, convergence: f32, agreements: Vec<String> },
+    /// reason = "consensus" | "max_rounds" | "stopped"
+    CouncilComplete   { council_id: String, rounds: u32, reason: String, synthesis: String },
+    CouncilButtIn     { council_id: String, message: String },
+
     Error { session: Option<SessionId>, message: String },
 
     // self-evolution

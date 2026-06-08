@@ -2,6 +2,8 @@ mod session_store;
 use session_store::SessionStore;
 mod scheduler;
 use scheduler::{load_schedules, run_scheduler, spawn_scheduler_handler, SchedulerState};
+mod council_handler;
+use council_handler::spawn_council_handler;
 
 use apexos_core::{
     ActionId, Bus, ContentBlock, Event, EvolutionId, EvolutionProposal, Message,
@@ -287,6 +289,22 @@ async fn main() -> anyhow::Result<()> {
     let root_session = SessionId(0); // scheduled prompts fire on root session unless task specifies
     spawn_scheduler_handler(Arc::clone(&scheduler_state), schedules_path.clone(), handle.clone(), sched_rx);
     tokio::spawn(run_scheduler(Arc::clone(&scheduler_state), handle.clone(), schedules_path, root_session));
+
+    // Council handler — receives convene_council tool calls, runs CouncilEngine.
+    let (council_tx, council_rx) = mpsc::channel::<(SessionId, ActionId, serde_json::Value)>(8);
+    if sv_cmd_tx.send(SupervisorCmd::SetCouncilTx { tx: council_tx }).await.is_err() {
+        eprintln!("[agentd] warning: failed to wire council channel");
+    }
+    spawn_council_handler(
+        council_rx,
+        bcast.clone(),
+        handle.clone(),
+        Arc::clone(&api_key_arc),
+        Arc::clone(&oai_api_key_arc),
+        Arc::clone(&oai_base_url_arc),
+        Arc::clone(&backend_arc),
+        Arc::clone(&model_arc),
+    );
 
     // Subscribe before supervisor so no early PluginUp events are missed.
     let agent_rx = bcast.subscribe();
@@ -986,6 +1004,7 @@ async fn gather_tools(
     tools.push(schedule_task_spec());
     tools.push(list_schedules_spec());
     tools.push(cancel_schedule_spec());
+    tools.push(convene_council_spec());
     tools
 }
 
@@ -1164,6 +1183,45 @@ fn cancel_schedule_spec() -> ToolSpec {
                 }
             },
             "required": ["schedule_id"]
+        }),
+    }
+}
+
+fn convene_council_spec() -> ToolSpec {
+    ToolSpec {
+        name: "convene_council".into(),
+        description: "Convene a multi-agent council to deliberate on a topic in parallel rounds. \
+                      Agents reason simultaneously, building on each other's responses until \
+                      consensus or max_rounds. Returns a synthesis of the deliberation. \
+                      Native agents (use by string ID): \
+                      AZOTH (alchemical synthesis, integrative), \
+                      VAJRA (technical precision, critical), \
+                      ELYSIAN (creative/empathic, expansive), \
+                      KETHER (philosophical wisdom, first-principles). \
+                      Custom agents supply id + persona.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "The question or topic for the council to deliberate on."
+                },
+                "agents": {
+                    "type": "array",
+                    "description": "Agents to convene. Use a string for native agents (e.g. \"AZOTH\") \
+                                    or an object {id, persona, backend?, model?, color?} for custom agents.",
+                    "items": {}
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "description": "Maximum deliberation rounds (default: 3)."
+                },
+                "consensus_threshold": {
+                    "type": "number",
+                    "description": "Convergence score 0.0–1.0 to stop early (default: 0.7)."
+                }
+            },
+            "required": ["topic", "agents"]
         }),
     }
 }
