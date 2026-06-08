@@ -617,6 +617,9 @@ html, body {
 .subagent-prompt { font-family: var(--mono); font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .subagent-status { font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
 .subagent-output { flex: 1; padding: 10px 12px; font-family: var(--mono); font-size: 12px; color: var(--text); overflow-y: auto; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+.subagent-text { margin: 4px 0; color: var(--text); }
+.subagent-output .tool-call { margin: 4px 0; font-size: 11px; }
+.subagent-output .approval-block { margin: 6px 0; }
 
 /* ─── Monaco IDE ─────────────────────────────────────────────────────────── */
 .ide-win { display: flex; flex-direction: column; height: 100%; overflow: hidden; background: #1e1e1e; }

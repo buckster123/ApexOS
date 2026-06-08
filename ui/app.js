@@ -154,8 +154,12 @@ function sendWs(obj) {
 // Maps child session_id (number) → { outputEl, statusEl }
 const subAgentOutputs = new Map();
 
-window.addWatchedSession    = (id, els) => subAgentOutputs.set(id, els);
-window.removeWatchedSession = (id)      => subAgentOutputs.delete(id);
+window.addWatchedSession = (id, els) => {
+  els.toolBlocks = new Map();
+  els.textEl     = null;
+  subAgentOutputs.set(id, els);
+};
+window.removeWatchedSession = (id) => subAgentOutputs.delete(id);
 
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
@@ -164,20 +168,92 @@ function handleEvent(ev) {
   if (SESSION_ID !== null && ev.session != null &&
       ev.session !== SESSION_ID && !subAgentOutputs.has(ev.session)) return;
 
-  // Sub-agent text/complete routes to child window, not main output
+  // Sub-agent events route to child window, not main output
   if (ev.session != null && subAgentOutputs.has(ev.session)) {
-    const { outputEl, statusEl } = subAgentOutputs.get(ev.session);
+    const entry = subAgentOutputs.get(ev.session);
+    const { outputEl, statusEl } = entry;
+    const childSession = ev.session;
+
     if (ev.type === 'agent_text' && ev.delta) {
-      outputEl.textContent += ev.delta;
+      if (!entry.textEl) {
+        entry.textEl = document.createElement('div');
+        entry.textEl.className = 'subagent-text';
+        outputEl.appendChild(entry.textEl);
+      }
+      entry.textEl.textContent += ev.delta;
       outputEl.scrollTop = outputEl.scrollHeight;
     }
-    if (ev.type === 'turn_complete' && statusEl) {
-      statusEl.textContent = '✓ done';
-      statusEl.style.color = 'var(--accent)';
+
+    if (ev.type === 'tool_requested' && ev.call) {
+      entry.textEl = null;  // next text after tool call gets a fresh block
+      const toolEl = makeToolCallEl(ev.call.id, ev.call.tool, ev.call.input);
+      outputEl.appendChild(toolEl);
+      entry.toolBlocks.set(String(ev.call.id), toolEl);
+      outputEl.scrollTop = outputEl.scrollHeight;
     }
+
+    if (ev.type === 'tool_result') {
+      const toolEl = entry.toolBlocks.get(String(ev.call));
+      if (toolEl) {
+        const statusSpan = toolEl.querySelector('.tool-status');
+        if (statusSpan) {
+          statusSpan.className  = `tool-status ${ev.output.ok ? 'ok' : 'err'}`;
+          statusSpan.textContent = ev.output.ok ? '✓' : '✗';
+        }
+        const body = toolEl.querySelector('.tool-body');
+        if (body) {
+          const resultEl = document.createElement('div');
+          resultEl.className = `tool-result${ev.output.ok ? '' : ' err'}`;
+          const content = ev.output.content;
+          const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+          resultEl.textContent = text.length > 400 ? text.slice(0, 400) + '\n…' : text;
+          body.appendChild(resultEl);
+          body.classList.add('open');
+          const toggle = toolEl.querySelector('.tool-toggle');
+          if (toggle) toggle.textContent = '▾';
+        }
+      }
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    if (ev.type === 'approval_pending' && ev.call) {
+      const block = document.createElement('div');
+      block.className = 'approval-block';
+      const argsStr = JSON.stringify(ev.call.input, null, 2);
+      block.innerHTML =
+        `<div class="approval-label">⚠ APPROVAL: <strong>${esc(ev.call.tool)}</strong></div>` +
+        `<div class="approval-args">${esc(argsStr)}</div>`;
+      const btns = document.createElement('div');
+      btns.className = 'approval-btns';
+      const approve = document.createElement('button');
+      approve.className   = 'btn-approve';
+      approve.textContent = 'APPROVE';
+      approve.onclick = () => {
+        sendWs({ type: 'user_approval', session: childSession, action: ev.call.id, granted: true });
+        block.replaceWith(approvedBadge(ev.call.tool, true));
+      };
+      const deny = document.createElement('button');
+      deny.className   = 'btn-deny';
+      deny.textContent = 'DENY';
+      deny.onclick = () => {
+        sendWs({ type: 'user_approval', session: childSession, action: ev.call.id, granted: false });
+        block.replaceWith(approvedBadge(ev.call.tool, false));
+      };
+      btns.append(approve, deny);
+      block.appendChild(btns);
+      outputEl.appendChild(block);
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    if (ev.type === 'turn_complete') {
+      if (statusEl) { statusEl.textContent = '✓ done'; statusEl.style.color = 'var(--accent)'; }
+      entry.textEl = null;  // reset for next turn
+    }
+
     if (ev.type === 'sub_agent_started') {
       if (typeof window.openSubAgentWin === 'function') window.openSubAgentWin(ev);
     }
+
     return;
   }
 
