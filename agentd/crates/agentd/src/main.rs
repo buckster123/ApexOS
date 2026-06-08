@@ -802,6 +802,12 @@ fn spawn_agent_router(
                     session_children.lock().await
                         .entry(parent).or_default().push(child_id);
 
+                    bus.emit(Event::SubAgentStarted {
+                        parent,
+                        child: child_id,
+                        prompt: prompt.chars().take(120).collect(),
+                    }).await;
+
                     let child_history = vec![Message::User {
                         content: vec![ContentBlock::Text { text: prompt }],
                     }];

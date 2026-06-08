@@ -138,6 +138,13 @@ pub enum Event {
         prompt:  String,
         system:  Option<String>,
     },
+    /// Emitted immediately after child session is created so the UI can
+    /// open a new agent window for the child.
+    SubAgentStarted {
+        parent: SessionId,
+        child:  SessionId,
+        prompt: String,
+    },
 
     // ── sensor bridge ─────────────────────────────────────
     /// Emitted by the /sensor-bridge WS handler when a body-pi node sends data.

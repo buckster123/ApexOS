@@ -150,10 +150,36 @@ function sendWs(obj) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
 
+// ─── Sub-agent session routing ────────────────────────────────────────────────
+// Maps child session_id (number) → { outputEl, statusEl }
+const subAgentOutputs = new Map();
+
+window.addWatchedSession    = (id, els) => subAgentOutputs.set(id, els);
+window.removeWatchedSession = (id)      => subAgentOutputs.delete(id);
+
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
-  // null means daemon-scoped (e.g. evolution errors); undefined means broadcast to all sessions.
-  if (SESSION_ID !== null && ev.session != null && ev.session !== SESSION_ID) return;
+  // null means daemon-scoped; undefined means all sessions.
+  // Also pass through events for watched child sessions.
+  if (SESSION_ID !== null && ev.session != null &&
+      ev.session !== SESSION_ID && !subAgentOutputs.has(ev.session)) return;
+
+  // Sub-agent text/complete routes to child window, not main output
+  if (ev.session != null && subAgentOutputs.has(ev.session)) {
+    const { outputEl, statusEl } = subAgentOutputs.get(ev.session);
+    if (ev.type === 'agent_text' && ev.delta) {
+      outputEl.textContent += ev.delta;
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    if (ev.type === 'turn_complete' && statusEl) {
+      statusEl.textContent = '✓ done';
+      statusEl.style.color = 'var(--accent)';
+    }
+    if (ev.type === 'sub_agent_started') {
+      if (typeof window.openSubAgentWin === 'function') window.openSubAgentWin(ev);
+    }
+    return;
+  }
 
   switch (ev.type) {
     case 'session_init':        onSessionInit(ev);        break;
@@ -167,6 +193,9 @@ function handleEvent(ev) {
     case 'evolution_proposed':  onEvolutionProposed(ev);  break;
     case 'evolution_applied':   onEvolutionApplied(ev);   break;
     case 'sensor_reading':      onSensorReading(ev);      break;
+    case 'sub_agent_started':
+      if (typeof window.openSubAgentWin === 'function') window.openSubAgentWin(ev);
+      break;
     case 'error':               onAgentError(ev);          break;
   }
 }

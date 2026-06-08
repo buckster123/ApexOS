@@ -633,6 +633,68 @@ function settingsApp() {
   };
 }
 
+// ─── Sub-agent windows ───────────────────────────────────────────────────────
+window.openSubAgentWin = function(ev) {
+  const child  = ev.child;
+  const prompt = (ev.prompt || '').slice(0, 100);
+  const winId  = 'subagent-' + child;
+  if (wins[winId]) { wins[winId].focus(); return; }
+
+  const container = document.createElement('div');
+  container.id        = 'win-' + winId + '-content';
+  container.className = 'win-content subagent-win';
+
+  const header = document.createElement('div');
+  header.className   = 'subagent-header';
+
+  const prompt_el = document.createElement('span');
+  prompt_el.className = 'subagent-prompt';
+  prompt_el.textContent = '▸ ' + prompt;
+
+  const status = document.createElement('span');
+  status.className   = 'subagent-status';
+  status.textContent = '⟳ running';
+  status.style.color = 'var(--accent2)';
+
+  header.append(prompt_el, status);
+
+  const output = document.createElement('div');
+  output.className = 'subagent-output';
+
+  container.append(header, output);
+  document.body.appendChild(container);
+
+  // Register so app.js routes child session events here
+  window.addWatchedSession(child, { outputEl: output, statusEl: status });
+
+  const cfg = {
+    title: '🤖 Agent #' + child,
+    x: 120 + (child % 6) * 30, y: 90 + (child % 4) * 30,
+    width: 640, height: 440,
+    background: 'var(--wb-bg)',
+  };
+
+  wins[winId] = new WinBox(cfg.title, {
+    ...cfg,
+    class: 'wb-apexos wb-subagent',
+    mount: container,
+    onclose() {
+      window.removeWatchedSession(child);
+      container.remove();
+      delete wins[winId];
+      removeTaskbarTab(winId);
+      return false;
+    },
+    onfocus()    { updateTab(winId, 'active'); },
+    onblur()     { updateTab(winId, 'open'); },
+    onminimize() { updateTab(winId, 'minimized'); },
+    onrestore()  { updateTab(winId, 'active'); },
+  });
+
+  createTaskbarTab(winId, cfg.title);
+  updateTab(winId, 'active');
+};
+
 // ─── Monaco IDE ───────────────────────────────────────────────────────────────
 let monacoEditor = null;
 let monacoReady  = false;
