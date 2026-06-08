@@ -202,10 +202,22 @@ function openWin(id) {
     const iframe = document.getElementById('sensorhead-iframe');
     if (iframe && !iframe.getAttribute('src')) iframe.src = `http://${location.hostname}:8080`;
   }
+  // Auto-navigate browser to default URL on first open
+  if (id === 'browser') {
+    setTimeout(() => {
+      const frame = document.getElementById('browser-iframe');
+      const input = document.getElementById('browser-url');
+      if (frame && input && !frame.src) {
+        let url = input.value.trim() || `http://${location.hostname}:8080`;
+        if (!url.startsWith('http')) url = 'http://' + url;
+        frame.src = url;
+      }
+    }, 80);
+  }
 
   content.style.display = '';
 
-  if (id === 'terminal') setTimeout(initTerminal, 60);
+  if (id === 'terminal') setTimeout(initTerminal, 120);
   if (id === 'notes')     setTimeout(notesInit, 30);
   if (id === 'sketchpad') setTimeout(sketchInit, 30);
   if (id === 'explorer')  setTimeout(explorerInit, 30);
@@ -228,7 +240,13 @@ function openWin(id) {
     onfocus()    { updateTab(id, 'active'); },
     onblur()     { updateTab(id, 'open'); },
     onminimize() { updateTab(id, 'minimized'); },
-    onrestore()  { updateTab(id, 'active'); },
+    onrestore()  {
+      updateTab(id, 'active');
+      if (id === 'terminal' && termFit) setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 30);
+    },
+    onresize()   {
+      if (id === 'terminal' && termFit) setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 30);
+    },
   });
 
   createTaskbarTab(id, cfg.title);
@@ -302,7 +320,7 @@ let termWs   = null;
 function initTerminal() {
   if (term) {
     if (!termWs || termWs.readyState > 1) termConnectWs();
-    if (termFit) setTimeout(() => termFit.fit(), 30);
+    if (termFit) setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 80);
     return;
   }
   const container = document.getElementById('terminal-xterm');
@@ -322,7 +340,11 @@ function initTerminal() {
   termFit = new window.FitAddon.FitAddon();
   term.loadAddon(termFit);
   term.open(container);
-  setTimeout(() => { termFit.fit(); termConnectWs(); }, 30);
+  // fit() first pass — must not block termConnectWs() if it throws
+  setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 80);
+  setTimeout(() => { termConnectWs(); }, 100);
+  // second fit pass after WinBox animation settles
+  setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 400);
 
   term.onResize(({ cols, rows }) => {
     if (termWs && termWs.readyState === 1)
