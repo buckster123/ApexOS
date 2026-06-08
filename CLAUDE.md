@@ -69,6 +69,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ## Resolved locked items
 - **MCP framing**: newline-delimited JSON, protocol `"2024-11-05"`. Real entrypoint: `/home/andre/Projects/CerebroCortex/cerebro-mcp`
 - **Hot-reload mechanics**: `SupervisorCmd::{SpawnPlugin,KillPlugin,HotReload}` via `cmd_tx()`; policy is `Arc<RwLock<PolicyEngine>>` (write-swap for live reload); soul.md is `Arc<RwLock<String>>`. Pi config files writable by `agentd` user (`chown agentd:agentd /etc/agentd/{soul.md,policy.toml,plugins.toml}`).
+- **Desktop UI script order**: `xterm.min.js` + `xterm-addon-fit.min.js` MUST load before `monaco/vs/loader.js`. Monaco installs a global AMD `define()` that hijacks xterm's UMD bundle, leaving `window.Terminal` = undefined. Any future AMD-compatible lib must also load before Monaco loader.
 
 ## Key files
 - `docs/reference/core_types.rs` — load-bearing types (Event, ToolCall, AgentContext, Message)
