@@ -1,7 +1,6 @@
 <div align="center">
 
-<!-- Replace with generated banner -->
-<!-- ![ApexOS Banner](docs/banner.png) -->
+![ApexOS Banner](docs/images/banner.jpg)
 
 # ApexOS
 
