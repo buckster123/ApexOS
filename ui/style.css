@@ -233,6 +233,12 @@ html, body {
 }
 #model-select:hover { border-color: var(--accent); color: var(--fg); }
 #model-select option { background: #111; color: var(--fg); }
+.cloud-filter-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--fg-dim); cursor: pointer; font-size: 12px; padding: 1px 5px; line-height: 1;
+}
+.cloud-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+.cloud-filter-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
 
 /* Policy mode selector */
 .policy-select {

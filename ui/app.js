@@ -832,10 +832,39 @@ function _applyBackendStyle(b, sel, urlI) {
   const local = _LOCAL_BACKENDS.includes(b);
   if (sel) { if (local) sel.classList.add('local'); else sel.classList.remove('local'); }
   if (urlI) { if (local) urlI.classList.remove('hidden'); else urlI.classList.add('hidden'); }
+  // Cloud filter: only meaningful for ollama; reset when switching away
+  const cfBtn = document.getElementById('cloud-filter-btn');
+  if (cfBtn) {
+    if (b === 'ollama' && _allModels.length) cfBtn.classList.remove('hidden');
+    else {
+      cfBtn.classList.add('hidden');
+      if (_cloudOnly) {
+        _cloudOnly = false;
+        cfBtn.classList.remove('active');
+        const ms = document.getElementById('model-select');
+        if (ms && _allModels.length) _renderModelOptions(ms, _allModels);
+      }
+    }
+  }
 }
 
 // ─── Model selector ───────────────────────────────────────────────────────────
 let _modelSelInit = false;
+let _allModels    = [];
+let _cloudOnly    = false;
+
+function _renderModelOptions(sel, models) {
+  const filtered = _cloudOnly ? models.filter(m => (m.id || '').endsWith(':cloud')) : models;
+  const list     = filtered.length ? filtered : models; // show all if filter empties list
+  if (list.length) {
+    sel.innerHTML = list.map(m => {
+      const id  = (m.id   || '').replace(/</g, '&lt;');
+      const lbl = (m.name || m.id || '').toUpperCase().replace(/</g, '&lt;');
+      return `<option value="${id}">${lbl}</option>`;
+    }).join('');
+  }
+}
+
 async function initModelSelector(currentModel) {
   const sel = document.getElementById('model-select');
   if (!sel) return;
@@ -844,15 +873,17 @@ async function initModelSelector(currentModel) {
   try {
     const res  = await fetch('/api/models');
     const data = await res.json();
-    const models = data.models || [];
-    if (models.length) {
-      sel.innerHTML = models.map(m => {
-        const id  = (m.id   || '').replace(/</g, '&lt;');
-        const lbl = (m.name || m.id || '').toUpperCase().replace(/</g, '&lt;');
-        return `<option value="${id}">${lbl}</option>`;
-      }).join('');
-    }
+    _allModels = data.models || [];
+    _renderModelOptions(sel, _allModels);
   } catch { /* keep static fallback options */ }
+
+  // Show/hide cloud filter based on current backend
+  const backend = document.getElementById('backend-select')?.value || '';
+  const cfBtn   = document.getElementById('cloud-filter-btn');
+  if (cfBtn) {
+    if (backend === 'ollama' && _allModels.length) cfBtn.classList.remove('hidden');
+    else cfBtn.classList.add('hidden');
+  }
 
   // Set current selection, inserting an option if the model isn't in the list
   if (currentModel) {
@@ -879,6 +910,17 @@ async function initModelSelector(currentModel) {
       } catch { /* offline */ }
     });
   }
+}
+
+function initCloudFilterBtn() {
+  const btn = document.getElementById('cloud-filter-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    _cloudOnly = !_cloudOnly;
+    btn.classList.toggle('active', _cloudOnly);
+    const sel = document.getElementById('model-select');
+    if (sel) _renderModelOptions(sel, _allModels);
+  });
 }
 
 // ─── Sending prompts ──────────────────────────────────────────────────────────
@@ -1040,6 +1082,7 @@ async function checkAndMaybePromptKey() {
     if (data.model)       initModelSelector(data.model);
     if (data.policy_mode) setPolicySelect(data.policy_mode);
     initBackendSelector();
+    initCloudFilterBtn();
 
     if (data.api_key_set) return;
   } catch {

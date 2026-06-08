@@ -120,6 +120,12 @@ html, body {
 }
 #model-select:focus, .policy-select:focus { outline: none; border-color: rgba(108,138,255,0.4); }
 #model-select option, .policy-select option { background: var(--surface); }
+.cloud-filter-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-dim); cursor: pointer; font-size: 13px; padding: 0 6px; height: 24px; line-height: 24px;
+}
+.cloud-filter-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+.cloud-filter-btn.active { background: var(--accent2); color: #000; border-color: var(--accent2); }
 
 .policy-select.policy-suggest  { border-color: rgba(255,255,255,0.12); }
 .policy-select.policy-autoedit { border-color: rgba(240,180,41,0.5); color: rgba(240,180,41,0.85); }
