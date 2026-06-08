@@ -270,8 +270,10 @@
   <!-- Browser window -->
   <div id="win-browser-content" class="win-content browser-win" style="display:none">
     <div class="browser-bar">
-      <button class="browser-btn" onclick="browserBack()">◀</button>
-      <input id="browser-url" class="browser-url" value="http://localhost:8080"
+      <button class="browser-btn" onclick="browserBack()" title="Back">◀</button>
+      <button class="browser-btn" onclick="browserForward()" title="Forward">▶</button>
+      <button class="browser-btn" onclick="browserRefresh()" title="Refresh">↺</button>
+      <input id="browser-url" class="browser-url" value=""
              spellcheck="false" onkeydown="if(event.key==='Enter') browserGo()">
       <button class="browser-btn go-btn" onclick="browserGo()">GO</button>
     </div>

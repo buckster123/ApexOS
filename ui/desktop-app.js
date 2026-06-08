@@ -202,13 +202,15 @@ function openWin(id) {
     const iframe = document.getElementById('sensorhead-iframe');
     if (iframe && !iframe.getAttribute('src')) iframe.src = `http://${location.hostname}:8080`;
   }
-  // Auto-navigate browser to default URL on first open
+  // Auto-navigate browser to sensorhead on first open; set input to Pi hostname
   if (id === 'browser') {
+    const input = document.getElementById('browser-url');
+    if (input && !input.value) input.value = `http://${location.hostname}:8080`;
     setTimeout(() => {
       const frame = document.getElementById('browser-iframe');
-      const input = document.getElementById('browser-url');
-      if (frame && input && !frame.src) {
-        let url = input.value.trim() || `http://${location.hostname}:8080`;
+      const inp   = document.getElementById('browser-url');
+      if (frame && inp && !frame.getAttribute('src')) {
+        let url = inp.value.trim() || `http://${location.hostname}:8080`;
         if (!url.startsWith('http')) url = 'http://' + url;
         frame.src = url;
       }
@@ -511,6 +513,16 @@ function browserGo() {
 function browserBack() {
   const frame = document.getElementById('browser-iframe');
   if (frame?.contentWindow) frame.contentWindow.history.back();
+}
+
+function browserForward() {
+  const frame = document.getElementById('browser-iframe');
+  if (frame?.contentWindow) frame.contentWindow.history.forward();
+}
+
+function browserRefresh() {
+  const frame = document.getElementById('browser-iframe');
+  if (frame?.contentWindow) frame.contentWindow.location.reload();
 }
 
 // ─── Camera window ───────────────────────────────────────────────────────────
