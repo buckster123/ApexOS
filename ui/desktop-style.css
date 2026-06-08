@@ -413,7 +413,7 @@ html, body {
 .sl-unit { font-family: var(--mono); font-size: 9px; color: var(--text-dim); }
 
 /* ─── Terminal window ────────────────────────────────────────────────────── */
-.terminal-win { padding: 0; overflow: hidden; background: #0d0f18; }
+.terminal-win { padding: 0; overflow: hidden; background: #0d0f18; display: block; }
 
 /* ─── Sketchpad window ───────────────────────────────────────────────────────── */
 .sketchpad-win { display: flex; flex-direction: column; padding: 0; }
@@ -459,17 +459,17 @@ html, body {
 }
 
 /* ─── Browser window ─────────────────────────────────────────────────────────── */
-.browser-win { display: flex; flex-direction: column; padding: 0; }
+.browser-win { display: block; padding: 0; }
 .browser-bar {
-  display: flex; align-items: center; gap: 5px;
-  padding: 7px 10px; border-bottom: 2px solid var(--accent2);
-  background: var(--surface2); flex-shrink: 0; min-height: 38px;
+  position: absolute; top: 0; left: 0; right: 0; height: 44px; z-index: 5;
+  display: flex; align-items: center; gap: 5px; padding: 0 10px;
+  background: var(--surface2); border-bottom: 2px solid var(--accent2);
+  box-sizing: border-box;
 }
 .browser-btn {
   background: var(--surface); color: var(--text-bright);
   border: 1px solid var(--border-hi); border-radius: var(--radius-sm);
-  padding: 4px 10px; font: 13px var(--mono); cursor: pointer;
-  flex-shrink: 0;
+  padding: 4px 10px; font: 13px var(--mono); cursor: pointer; flex-shrink: 0;
 }
 .browser-btn:hover { background: var(--border-hi); color: var(--accent); }
 .go-btn { color: var(--accent); border-color: var(--accent); font-weight: 700; }
@@ -479,7 +479,10 @@ html, body {
   padding: 5px 12px; font: 13px var(--mono); min-width: 0;
 }
 .browser-url:focus { outline: none; border-color: var(--accent2); }
-.browser-iframe { flex: 1; min-height: 0; border: none; background: #fff; }
+.browser-iframe {
+  position: absolute; top: 44px; left: 0; right: 0; bottom: 0;
+  border: none; background: #fff;
+}
 
 /* ─── Wallpaper picker (Settings → Desktop) ─────────────────────────────────── */
 .wp-picker { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
@@ -516,8 +519,7 @@ html, body {
 }
 #camera-snapshot { max-width: 100%; max-height: 100%; object-fit: contain; display: none; }
 #camera-placeholder { color: var(--text-dim); font: 13px var(--mono); }
-#terminal-xterm { width: 100%; flex: 1; min-height: 0; overflow: hidden; }
-/* xterm.js injects its own canvas — make it fill the flex container */
+#terminal-xterm { position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow: hidden; }
 #terminal-xterm .xterm { height: 100%; }
 #terminal-xterm .xterm-viewport { overflow-y: auto !important; }
 
