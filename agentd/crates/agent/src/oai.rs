@@ -11,24 +11,21 @@ use tokio::sync::RwLock;
 /// OAI-compatible REST endpoint.  Set AGENTD_BACKEND + AGENTD_OAI_BASE_URL.
 pub struct OaiProvider {
     http:     reqwest::Client,
-    base_url: String,              // e.g. "http://localhost:11434/v1"
+    base_url: Arc<RwLock<String>>, // live-swappable e.g. "http://localhost:11434/v1"
     api_key:  Arc<RwLock<String>>, // empty for Ollama/vllm; Bearer token for OpenRouter
     model:    Arc<RwLock<String>>,
 }
 
 impl OaiProvider {
     pub fn new(
-        base_url: impl Into<String>,
+        base_url: Arc<RwLock<String>>,
         api_key: Arc<RwLock<String>>,
         model: Arc<RwLock<String>>,
     ) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            base_url: base_url.into(),
-            api_key,
-            model,
-        }
+        Self { http: reqwest::Client::new(), base_url, api_key, model }
     }
+
+    pub fn base_url_arc(&self) -> Arc<RwLock<String>> { Arc::clone(&self.base_url) }
 }
 
 #[async_trait]
@@ -39,11 +36,12 @@ impl Provider for OaiProvider {
         tools: &[ToolSpec],
         system: Option<&str>,
     ) -> anyhow::Result<ChunkStream> {
-        let api_key = self.api_key.read().await.clone();
-        let model   = self.model.read().await.clone();
+        let api_key  = self.api_key.read().await.clone();
+        let model    = self.model.read().await.clone();
+        let base_url = self.base_url.read().await.clone();
         let body = build_body(&model, history, tools, system);
 
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
         let mut req = self.http
             .post(&url)

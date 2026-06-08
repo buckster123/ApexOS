@@ -25,10 +25,10 @@ pub struct GatewayState {
     pub bcast:                 broadcast::Sender<Event>,
     pub api_key:               Arc<RwLock<String>>,
     pub model:                 Arc<RwLock<String>>,
-    /// Active inference backend: "anthropic" | "ollama" | "vllm" | "openrouter"
-    pub backend:               Arc<String>,
-    /// Base URL for OAI-compatible backends (e.g. "http://localhost:11434/v1")
-    pub oai_base_url:          Arc<String>,
+    /// Active inference backend — live-swappable: "anthropic" | "ollama" | "vllm" | "openrouter"
+    pub backend:               Arc<RwLock<String>>,
+    /// Base URL for OAI-compatible backends — live-swappable
+    pub oai_base_url:          Arc<RwLock<String>>,
     pub policy_mode:           Arc<RwLock<String>>,
     /// Send a mode string ("suggest" | "auto-edit" | "yolo") to live-update the PolicyEngine.
     pub policy_set_tx:         mpsc::Sender<String>,
@@ -51,6 +51,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/key",      post(set_key_handler))
         .route("/api/model",    get(get_model_handler).post(set_model_handler))
         .route("/api/models",   get(get_models_handler))
+        .route("/api/backend",  get(get_backend_handler).post(set_backend_handler))
         .route("/api/policy",         post(set_policy_handler))
         .route("/api/policy/rules",   get(get_policy_rules_handler))
         .route("/api/soul",     get(get_soul_handler).post(set_soul_handler))
@@ -323,8 +324,9 @@ async fn get_model_handler(State(state): State<GatewayState>) -> impl IntoRespon
 /// Returns available models for the active backend.
 /// For Anthropic: static list. For OAI backends: proxies to {base_url}/models.
 async fn get_models_handler(State(state): State<GatewayState>) -> impl IntoResponse {
-    let current = state.model.read().await.clone();
-    let backend = state.backend.as_str();
+    let current     = state.model.read().await.clone();
+    let backend     = state.backend.read().await.clone();
+    let oai_base    = state.oai_base_url.read().await.clone();
 
     if backend == "anthropic" {
         return Json(serde_json::json!({
@@ -340,7 +342,7 @@ async fn get_models_handler(State(state): State<GatewayState>) -> impl IntoRespo
     }
 
     // OAI-compatible backend: query {base_url}/models for live model list
-    let models_url = format!("{}/models", state.oai_base_url.trim_end_matches('/'));
+    let models_url = format!("{}/models", oai_base.trim_end_matches('/'));
     let api_key = state.api_key.read().await.clone();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
@@ -364,6 +366,7 @@ async fn get_models_handler(State(state): State<GatewayState>) -> impl IntoRespo
                     .collect();
                 return Json(serde_json::json!({
                     "backend": backend,
+                    "oai_base_url": oai_base,
                     "current": current,
                     "models":  models,
                 }));
@@ -375,9 +378,45 @@ async fn get_models_handler(State(state): State<GatewayState>) -> impl IntoRespo
     // Fallback: return just the current model
     Json(serde_json::json!({
         "backend": backend,
+        "oai_base_url": oai_base,
         "current": current,
         "models": [{ "id": current, "name": current }],
     }))
+}
+
+async fn get_backend_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "backend":     state.backend.read().await.clone(),
+        "oai_base_url": state.oai_base_url.read().await.clone(),
+    }))
+}
+
+async fn set_backend_handler(
+    State(state): State<GatewayState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let backend = body["backend"].as_str().unwrap_or("").trim().to_lowercase();
+    if backend.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "missing backend" }));
+    }
+    *state.backend.write().await = backend;
+
+    if let Some(url) = body["oai_base_url"].as_str() {
+        let url = url.trim().to_string();
+        if !url.is_empty() {
+            *state.oai_base_url.write().await = url;
+        }
+    }
+
+    // Optionally update the model when switching backends
+    if let Some(model) = body["model"].as_str() {
+        let model = model.trim().to_string();
+        if !model.is_empty() {
+            *state.model.write().await = model;
+        }
+    }
+
+    Json(serde_json::json!({ "ok": true }))
 }
 
 async fn set_model_handler(

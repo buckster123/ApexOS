@@ -763,6 +763,59 @@ function triggerPower(action) {
   }, 1000);
 }
 
+// ─── Backend selector (shared by CLI and Desktop skins) ───────────────────────
+const _LOCAL_BACKENDS = ['ollama', 'vllm', 'oai'];
+let _backendSelInit = false;
+
+async function initBackendSelector() {
+  const sel  = document.getElementById('backend-select');
+  const urlI = document.getElementById('backend-url');
+  if (!sel) return;
+
+  // Fetch current config
+  try {
+    const d = await fetch('/api/backend').then(r => r.json());
+    const b = (d.backend || 'anthropic').toLowerCase();
+    sel.value = b;
+    if (urlI && d.oai_base_url) urlI.value = d.oai_base_url;
+    _applyBackendStyle(b, sel, urlI);
+  } catch {}
+
+  if (_backendSelInit) return;
+  _backendSelInit = true;
+
+  sel.addEventListener('change', () => _applyBackendStyle(sel.value, sel, urlI));
+
+  async function applyBackend() {
+    const backend = sel.value;
+    const url     = urlI ? urlI.value.trim() : '';
+    const body    = { backend };
+    if (url) body.oai_base_url = url;
+    try {
+      await fetch('/api/backend', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      // Refresh model list for the new backend
+      const cur = await fetch('/api/model').then(r => r.json()).then(d => d.model).catch(() => '');
+      _modelSelInit = false; // allow re-attach is harmless; options will refresh
+      initModelSelector(cur);
+    } catch {}
+  }
+
+  sel.addEventListener('change', applyBackend);
+  if (urlI) {
+    urlI.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applyBackend(); } });
+    urlI.addEventListener('blur', applyBackend);
+  }
+}
+
+function _applyBackendStyle(b, sel, urlI) {
+  const local = _LOCAL_BACKENDS.includes(b);
+  if (sel) { if (local) sel.classList.add('local'); else sel.classList.remove('local'); }
+  if (urlI) { if (local) urlI.classList.remove('hidden'); else urlI.classList.add('hidden'); }
+}
+
 // ─── Model selector ───────────────────────────────────────────────────────────
 let _modelSelInit = false;
 async function initModelSelector(currentModel) {
@@ -968,6 +1021,7 @@ async function checkAndMaybePromptKey() {
     // Apply server-reported state
     if (data.model)       initModelSelector(data.model);
     if (data.policy_mode) setPolicySelect(data.policy_mode);
+    initBackendSelector();
 
     if (data.api_key_set) return;
   } catch {

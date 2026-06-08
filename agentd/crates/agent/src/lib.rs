@@ -1,9 +1,11 @@
 pub mod provider;
 pub mod anthropic;
 pub mod oai;
+pub mod routing;
 pub mod turn;
 
 pub use provider::{Chunk, ChunkStream, Provider};
 pub use anthropic::AnthropicProvider;
 pub use oai::OaiProvider;
+pub use routing::RoutingProvider;
 pub use turn::{TurnEngine, run_turn};

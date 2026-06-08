@@ -37,6 +37,13 @@
       <span id="hdr-logo">APEXOS</span>
       <span id="hdr-center"></span>
       <div id="hdr-controls">
+        <select id="backend-select" class="backend-select" title="Inference backend">
+          <option value="anthropic">ANTHROPIC</option>
+          <option value="ollama">OLLAMA</option>
+          <option value="vllm">VLLM</option>
+          <option value="openrouter">OPENROUTER</option>
+        </select>
+        <input id="backend-url" class="backend-url hidden" placeholder="http://host:11434/v1" spellcheck="false" title="OAI base URL">
         <select id="model-select" title="Active model">
           <option value="claude-sonnet-4-6">SONNET 4.6</option>
           <option value="claude-opus-4-8">OPUS 4.8</option>

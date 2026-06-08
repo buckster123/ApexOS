@@ -12,7 +12,7 @@ use apexos_plugins::{
     load as load_plugins, PluginConfig, PolicyConfig, PolicyEngine, RestartPolicy,
     Supervisor, SupervisorCmd, ToolProxy,
 };
-use apexos_agent::{AnthropicProvider, OaiProvider, TurnEngine, run_turn};
+use apexos_agent::{RoutingProvider, TurnEngine, run_turn};
 use apexos_store::run_log_writer;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -73,16 +73,18 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("[agentd] ANTHROPIC_API_KEY not set — enter via browser UI at :8787");
     }
     let api_key_arc = Arc::new(RwLock::new(api_key_str));
-    let backend = std::env::var("AGENTD_BACKEND").unwrap_or_else(|_| "anthropic".into());
-    let oai_base_url = std::env::var("AGENTD_OAI_BASE_URL")
+    let backend_str = std::env::var("AGENTD_BACKEND").unwrap_or_else(|_| "anthropic".into());
+    let oai_base_url_str = std::env::var("AGENTD_OAI_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434/v1".into());
-    let default_model = std::env::var("AGENTD_MODEL").unwrap_or_else(|_| match backend.as_str() {
+    let default_model = std::env::var("AGENTD_MODEL").unwrap_or_else(|_| match backend_str.as_str() {
         "ollama" | "vllm" => "qwen3:27b".into(),
         "openrouter"      => "qwen/qwen3-70b-a3b".into(),
         _                 => "claude-sonnet-4-6".into(),
     });
-    eprintln!("[agentd] backend: {backend}, model: {default_model}");
-    let model_arc   = Arc::new(RwLock::new(default_model));
+    eprintln!("[agentd] backend: {backend_str}, model: {default_model}");
+    let model_arc        = Arc::new(RwLock::new(default_model));
+    let backend_arc      = Arc::new(RwLock::new(backend_str));
+    let oai_base_url_arc = Arc::new(RwLock::new(oai_base_url_str));
 
     // Load policy config and wrap in a shared Arc so the evolution applier can hot-swap it.
     let policy_path = PathBuf::from(
@@ -154,8 +156,8 @@ async fn main() -> anyhow::Result<()> {
         bcast:                bcast.clone(),
         api_key:              Arc::clone(&api_key_arc),
         model:                Arc::clone(&model_arc),
-        backend:              Arc::new(backend.clone()),
-        oai_base_url:         Arc::new(oai_base_url.clone()),
+        backend:              Arc::clone(&backend_arc),
+        oai_base_url:         Arc::clone(&oai_base_url_arc),
         policy_mode:          Arc::clone(&policy_mode_arc),
         policy_set_tx,
         ui_dir,
@@ -200,19 +202,17 @@ async fn main() -> anyhow::Result<()> {
     supervisor.set_rollback_tx(rollback_tx);
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
-    // Agent turn engine — provider selected by AGENTD_BACKEND env var
-    let engine: Arc<TurnEngine> = Arc::new(match backend.as_str() {
-        "ollama" | "vllm" | "openrouter" | "oai" => TurnEngine::new(
-            OaiProvider::new(oai_base_url, Arc::clone(&api_key_arc), Arc::clone(&model_arc)),
-            16,
-            Some(soul_content),
+    // Agent turn engine — RoutingProvider dispatches per-call based on backend_arc
+    let engine: Arc<TurnEngine> = Arc::new(TurnEngine::new(
+        RoutingProvider::new(
+            Arc::clone(&backend_arc),
+            Arc::clone(&oai_base_url_arc),
+            Arc::clone(&api_key_arc),
+            Arc::clone(&model_arc),
         ),
-        _ => TurnEngine::new(
-            AnthropicProvider::new_shared(Arc::clone(&api_key_arc), Arc::clone(&model_arc)),
-            16,
-            Some(soul_content),
-        ),
-    });
+        16,
+        Some(soul_content),
+    ));
     let soul_arc = engine.system_arc();
 
     // Share soul_arc with the supervisor so read_soul_md returns live content.

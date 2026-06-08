@@ -204,6 +204,21 @@ html, body {
 }
 
 /* Model selector */
+.backend-select {
+  background: transparent; border: 1px solid rgba(108,138,255,0.35);
+  color: rgba(108,138,255,0.85); font-family: var(--font); font-size: 10px;
+  font-weight: 600; letter-spacing: 0.06em; padding: 2px 4px;
+  cursor: pointer; border-radius: var(--radius); outline: none;
+}
+.backend-select:hover { border-color: rgba(108,138,255,0.6); color: rgba(108,138,255,1); }
+.backend-select option { background: #111; color: var(--fg); }
+.backend-select.local { border-color: rgba(32,200,120,0.45); color: rgba(32,200,120,0.9); }
+.backend-url {
+  background: transparent; border: 1px solid var(--border); color: var(--fg-dim);
+  font-family: var(--font); font-size: 10px; padding: 2px 6px;
+  border-radius: var(--radius); outline: none; width: 160px;
+}
+.backend-url:focus { border-color: rgba(108,138,255,0.4); }
 #model-select {
   background: transparent;
   border: 1px solid var(--border);

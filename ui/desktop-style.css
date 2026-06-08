@@ -97,14 +97,22 @@ html, body {
 #topbar-center { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: center; }
 #topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
-.backend-badge {
-  font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .06em;
-  padding: 2px 7px; height: 20px; line-height: 16px;
-  border-radius: var(--radius-sm); border: 1px solid rgba(108,138,255,0.3);
-  background: rgba(108,138,255,0.1); color: rgba(108,138,255,0.85);
-  white-space: nowrap; cursor: default;
+.backend-select {
+  background: rgba(108,138,255,0.08); color: rgba(108,138,255,0.9);
+  border: 1px solid rgba(108,138,255,0.3); border-radius: var(--radius-sm);
+  padding: 2px 6px; height: 24px; font-family: var(--mono); font-size: 11px;
+  font-weight: 600; letter-spacing: .04em; cursor: pointer;
 }
-.backend-badge.local { border-color: rgba(32,200,120,0.35); background: rgba(32,200,120,0.1); color: rgba(32,200,120,0.9); }
+.backend-select:focus { outline: none; border-color: rgba(108,138,255,0.5); }
+.backend-select option { background: var(--surface); }
+.backend-select.local { background: rgba(32,200,120,0.08); color: rgba(32,200,120,0.9); border-color: rgba(32,200,120,0.35); }
+.backend-url {
+  background: rgba(255,255,255,0.04); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 2px 8px; height: 24px; font-family: var(--mono); font-size: 11px;
+  width: 180px; box-sizing: border-box;
+}
+.backend-url:focus { outline: none; border-color: rgba(108,138,255,0.4); }
 #model-select, .policy-select {
   background: rgba(255,255,255,0.04); color: var(--text-dim);
   border: 1px solid var(--border); border-radius: var(--radius-sm);

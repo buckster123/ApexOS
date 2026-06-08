@@ -1558,23 +1558,11 @@ window.onWakeTriggered = async () => {
   }, WAKE_RECORD_SECS * 1000);
 };
 
-// ─── Backend badge ────────────────────────────────────────────────────────────
-async function initBackendBadge() {
-  try {
-    const data = await fetch('/api/models').then(r => r.json());
-    const badge = document.getElementById('backend-badge');
-    if (!badge) return;
-    const b = (data.backend || 'anthropic').toUpperCase();
-    badge.textContent = b;
-    const localBackends = ['OLLAMA', 'VLLM', 'OAI'];
-    if (localBackends.includes(b)) badge.classList.add('local');
-    else badge.classList.remove('local');
-  } catch {}
-}
+// Backend selector is initialized by app.js initBackendSelector() via checkAndMaybePromptKey.
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  initBackendBadge();
+  // initBackendSelector called via app.js checkAndMaybePromptKey
   // Power modal
   document.getElementById('power-btn')?.addEventListener('click', () => {
     if (typeof showPowerModal === 'function') showPowerModal();
