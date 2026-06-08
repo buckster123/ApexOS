@@ -143,6 +143,11 @@ const WIN_DEFAULTS = {
     x: 200, y: 80, width: 520, height: 480,
     background: 'var(--wb-bg)',
   },
+  home: {
+    title: '🏠 ApexOS Home',
+    x: 60, y: 50, width: 860, height: 560,
+    background: 'var(--wb-bg)',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -206,6 +211,7 @@ function openWin(id) {
   if (id === 'explorer')  setTimeout(explorerInit, 30);
   if (id === 'ide')       setTimeout(ideInit, 60);
   if (id === 'player')    setTimeout(playerInit, 30);
+  if (id === 'home')      setTimeout(homeInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -214,6 +220,7 @@ function openWin(id) {
     mount: content,
     onclose() {
       content.style.display = 'none';
+      if (id === 'home') homeStop();
       delete wins[id];
       removeTaskbarTab(id);
       return false;
@@ -1193,6 +1200,180 @@ function playerPrev() {
     return;
   }
   playerSelect(playerIndex <= 0 ? playerTracks.length - 1 : playerIndex - 1);
+}
+
+// ─── Home / Dashboard ────────────────────────────────────────────────────────
+let homeInterval = null;
+
+function homeStop() {
+  clearInterval(homeInterval);
+  homeInterval = null;
+}
+
+function homeInit() {
+  homeRefresh();
+  if (!homeInterval) homeInterval = setInterval(homeRefresh, 6000);
+}
+
+async function homeRunCmd(cmd) {
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: cmd }),
+    });
+    const j = await r.json();
+    return j.ok ? j.stdout.trim() : '';
+  } catch { return ''; }
+}
+
+async function homeRefresh() {
+  const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+
+  // ── system stats (parallel shell calls) ──────────────────────────────────
+  const [tempStr, ramStr, diskStr, uptimeRaw] = await Promise.all([
+    homeRunCmd("awk '{printf \"%.1f\", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0"),
+    homeRunCmd("free -m | awk 'NR==2{printf \"%d %d\", $3, $2}'"),
+    homeRunCmd("df -BG / | awk 'NR==2{gsub(/G/,\"\"); printf \"%d %d\", $3, $2}'"),
+    homeRunCmd("awk '{d=int($1/86400);h=int(($1%86400)/3600);m=int(($1%3600)/60);printf \"%dd %dh %dm\",d,h,m}' /proc/uptime"),
+  ]);
+
+  // CPU temp
+  const cpuTemp = parseFloat(tempStr) || 0;
+  const tempEl = document.getElementById('h-cputemp');
+  if (tempEl) {
+    tempEl.textContent = cpuTemp.toFixed(1);
+    tempEl.style.color = cpuTemp >= 70 ? '#ff4444' : cpuTemp >= 60 ? '#f0b429' : '#39ff14';
+  }
+
+  // RAM
+  const [ramUsed, ramTotal] = ramStr.split(' ').map(Number);
+  if (ramTotal > 0) {
+    const pct = Math.round(ramUsed / ramTotal * 100);
+    const ramBar = document.getElementById('h-ram-bar');
+    if (ramBar) { ramBar.style.width = pct + '%'; ramBar.style.background = pct > 85 ? '#ff4444' : pct > 65 ? '#f0b429' : 'var(--accent)'; }
+    set('h-ram-val', `${(ramUsed/1024).toFixed(1)} / ${(ramTotal/1024).toFixed(1)} GB`);
+  }
+
+  // Disk
+  const [diskUsed, diskTotal] = diskStr.split(' ').map(Number);
+  if (diskTotal > 0) {
+    const pct = Math.round(diskUsed / diskTotal * 100);
+    const diskBar = document.getElementById('h-disk-bar');
+    if (diskBar) { diskBar.style.width = pct + '%'; diskBar.style.background = pct > 90 ? '#ff4444' : pct > 75 ? '#f0b429' : 'var(--accent)'; }
+    set('h-disk-val', `${diskUsed}G / ${diskTotal}G`);
+  }
+
+  // Uptime
+  set('h-uptime', uptimeRaw || '—');
+
+  // ── agent status ──────────────────────────────────────────────────────────
+  try {
+    const st = await fetch('/api/status').then(r => r.json());
+    set('h-model',  st.model       || '—');
+    set('h-policy', st.policy_mode || '—');
+  } catch {}
+
+  // ── evolution stats ───────────────────────────────────────────────────────
+  try {
+    const ev = await fetch('/api/evolution/stats').then(r => r.json());
+    set('h-evo', `${ev.applied_total || 0} applied · ${(ev.rollback_rate || 0).toFixed(1)}% rollback`);
+  } catch {}
+
+  // ── sessions ──────────────────────────────────────────────────────────────
+  try {
+    const sessions = await fetch('/api/sessions').then(r => r.json());
+    set('h-sessions-count', sessions.length ? `(${sessions.length})` : '');
+    const el = document.getElementById('h-sessions');
+    if (el) {
+      el.innerHTML = '';
+      sessions.slice(0, 5).forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'hc-session-item';
+        const age = homeTimeAgo(s.last_active);
+        const preview = (s.preview || '').slice(0, 72) || '(no preview)';
+        item.innerHTML =
+          `<span class="hc-sid">#${s.session_id}</span>` +
+          `<span class="hc-spreview">${esc(preview)}</span>` +
+          `<span class="hc-sage">${age}</span>`;
+        el.appendChild(item);
+      });
+    }
+  } catch {}
+
+  // ── sensor state (from global already populated by bus events) ────────────
+  homeRenderSensors();
+
+  // ── plugins ───────────────────────────────────────────────────────────────
+  const pluginsEl = document.getElementById('h-plugins');
+  if (pluginsEl) {
+    pluginsEl.innerHTML = '';
+    const counts = window.pluginCounts || {};
+    if (Object.keys(counts).length === 0) {
+      pluginsEl.innerHTML = '<span style="color:var(--text-dim);font-size:10px">none online</span>';
+    } else {
+      Object.entries(counts).forEach(([name, tools]) => {
+        const dot = document.createElement('span');
+        dot.className = 'hc-plugin-dot';
+        dot.title = `${tools} tools`;
+        dot.textContent = `● ${name}`;
+        pluginsEl.appendChild(dot);
+      });
+    }
+  }
+}
+
+function homeRenderSensors() {
+  const env     = window.sensorState?.env;
+  const thermal = window.sensorState?.thermal;
+
+  const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+
+  if (env) {
+    const iaq = env.iaq ?? 0;
+    const iaqEl  = document.getElementById('h-iaq-num');
+    const lblEl  = document.getElementById('h-iaq-label');
+    if (iaqEl)  { iaqEl.textContent = Math.round(iaq); iaqEl.style.color = iaqColor(iaq); }
+    if (lblEl)  { lblEl.textContent = iaqLabel(iaq); lblEl.style.color = iaqColor(iaq); }
+    set('h-env-temp',  env.temperature_c != null ? `${env.temperature_c.toFixed(1)} °C` : '—');
+    set('h-env-humid', env.humidity_pct  != null ? `${env.humidity_pct.toFixed(1)} %`   : '—');
+    set('h-env-press', env.pressure_hpa  != null ? `${env.pressure_hpa.toFixed(0)} hPa` : '—');
+  } else {
+    ['h-iaq-num','h-env-temp','h-env-humid','h-env-press'].forEach(id => set(id, '—'));
+    const lblEl = document.getElementById('h-iaq-label');
+    if (lblEl) lblEl.textContent = 'no sensor';
+  }
+
+  if (thermal) homeDrawThermal(thermal);
+}
+
+function homeDrawThermal(frame) {
+  const canvas = document.getElementById('h-thermal');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = 32, H = 24;
+  const cw = canvas.width / W, ch = canvas.height / H;
+  const minC = frame.min_c ?? 20, maxC = frame.max_c ?? 35;
+  const range = Math.max(1, maxC - minC);
+  const pixels = frame.pixels || [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const t = pixels[y * W + x] ?? frame.mean_c ?? ((minC + maxC) / 2);
+      const n = Math.max(0, Math.min(1, (t - minC) / range));
+      const r = Math.round(n * 255);
+      const b = Math.round((1 - n) * 200);
+      ctx.fillStyle = `rgb(${r},${Math.round(n * 80)},${b})`;
+      ctx.fillRect(x * cw, y * ch, cw + 0.5, ch + 0.5);
+    }
+  }
+}
+
+function homeTimeAgo(ts) {
+  if (!ts) return '—';
+  const sec = Math.floor(Date.now() / 1000 - ts);
+  if (sec < 60)    return 'just now';
+  if (sec < 3600)  return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────

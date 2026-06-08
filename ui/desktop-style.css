@@ -679,3 +679,46 @@ html, body {
 .player-vol-label { font-size: 13px; color: var(--text-dim); flex-shrink: 0; }
 .player-vol { max-width: 80px; }
 .player-refresh-btn { margin-left: auto; padding: 4px 8px; font-size: 12px; }
+
+/* ─── Home / Dashboard ───────────────────────────────────────────────────── */
+.home-win  { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.home-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.home-logo   { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.12em; }
+.home-uptime { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.home-body   { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.home-top    { display: flex; flex: 1; overflow: hidden; border-bottom: 1px solid var(--border); }
+.home-sessions-bar { flex-shrink: 0; padding: 10px 14px; height: 150px; display: flex; flex-direction: column; overflow: hidden; }
+
+.home-card { flex: 1; padding: 12px 14px; border-right: 1px solid var(--border); overflow: hidden; display: flex; flex-direction: column; gap: 0; }
+.home-card:last-child { border-right: none; }
+
+.hc-title    { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; color: var(--text-dim); margin-bottom: 10px; }
+.hc-label    { font-family: var(--mono); font-size: 10px; color: var(--text-dim); min-width: 52px; display: inline-block; }
+.hc-big      { font-family: var(--mono); font-size: 28px; font-weight: 700; line-height: 1; }
+.hc-unit     { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-left: 2px; }
+
+/* System card */
+.hc-temp-row { display: flex; align-items: baseline; gap: 6px; margin-bottom: 14px; }
+.hc-bar-row  { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.hc-bar-track { flex: 1; height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+.hc-bar-fill  { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.5s ease, background 0.5s; }
+.hc-bar-val   { font-family: var(--mono); font-size: 10px; color: var(--text-dim); min-width: 90px; text-align: right; }
+
+/* Environment card */
+.hc-iaq-row   { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.hc-iaq-label { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.hc-env-row   { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-family: var(--mono); font-size: 11px; }
+.hc-thermal   { display: block; width: 100%; max-width: 192px; margin-top: auto; image-rendering: pixelated; border-radius: 2px; opacity: 0.9; }
+
+/* Agent card */
+.hc-agent-stat { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; font-family: var(--mono); font-size: 11px; }
+.hc-plugins    { display: flex; flex-direction: column; gap: 4px; }
+.hc-plugin-dot { font-family: var(--mono); font-size: 10px; color: #39ff14; }
+
+/* Sessions bottom */
+.hc-sessions      { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.hc-session-item  { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; padding: 3px 4px; border-radius: 2px; cursor: default; }
+.hc-session-item:hover { background: var(--surface); }
+.hc-sid      { color: var(--accent2); flex-shrink: 0; min-width: 28px; }
+.hc-spreview { flex: 1; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-sage     { color: var(--text-dim); flex-shrink: 0; opacity: 0.6; }

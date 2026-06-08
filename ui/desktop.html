@@ -84,6 +84,7 @@
   <div id="start-menu" class="hidden">
     <div class="sm-pane sm-left">
       <div class="sm-section-title">APPLICATIONS</div>
+      <button class="sm-item" onclick="launchApp('home')"><span class="sm-emoji">🏠</span>Home</button>
       <button class="sm-item" onclick="launchApp('agent')"><span class="sm-emoji">🤖</span>Agent</button>
       <button class="sm-item" onclick="launchApp('terminal')"><span class="sm-emoji">💻</span>Terminal</button>
       <button class="sm-item" onclick="launchApp('sensors')"><span class="sm-emoji">📡</span>Sensors</button>
@@ -348,6 +349,71 @@
         </button>
       </div>
     </div>
+  </div>
+
+  <!-- Home / Dashboard -->
+  <div id="win-home-content" class="win-content home-win" style="display:none">
+    <div class="home-header">
+      <span class="home-logo">⬡ APEXOS</span>
+      <span class="home-uptime" id="h-uptime">—</span>
+    </div>
+    <div class="home-body">
+
+      <!-- Top 3-card row -->
+      <div class="home-top">
+
+        <!-- SYSTEM -->
+        <div class="home-card">
+          <div class="hc-title">SYSTEM</div>
+          <div class="hc-temp-row">
+            <span class="hc-label">CPU</span>
+            <span class="hc-big" id="h-cputemp">—</span>
+            <span class="hc-unit">°C</span>
+          </div>
+          <div class="hc-bar-row">
+            <span class="hc-label">RAM</span>
+            <div class="hc-bar-track"><div class="hc-bar-fill" id="h-ram-bar" style="width:0%"></div></div>
+            <span class="hc-bar-val" id="h-ram-val">—</span>
+          </div>
+          <div class="hc-bar-row">
+            <span class="hc-label">Disk</span>
+            <div class="hc-bar-track"><div class="hc-bar-fill" id="h-disk-bar" style="width:0%"></div></div>
+            <span class="hc-bar-val" id="h-disk-val">—</span>
+          </div>
+        </div>
+
+        <!-- ENVIRONMENT -->
+        <div class="home-card">
+          <div class="hc-title">ENVIRONMENT</div>
+          <div class="hc-iaq-row">
+            <span class="hc-big" id="h-iaq-num">—</span>
+            <span class="hc-iaq-label" id="h-iaq-label">IAQ</span>
+          </div>
+          <div class="hc-env-row"><span class="hc-label">Temp</span><span id="h-env-temp">—</span></div>
+          <div class="hc-env-row"><span class="hc-label">Humidity</span><span id="h-env-humid">—</span></div>
+          <div class="hc-env-row"><span class="hc-label">Pressure</span><span id="h-env-press">—</span></div>
+          <canvas id="h-thermal" width="128" height="96" class="hc-thermal"></canvas>
+        </div>
+
+        <!-- AGENT -->
+        <div class="home-card">
+          <div class="hc-title">AGENT</div>
+          <div class="hc-agent-stat"><span class="hc-label">Model</span><span id="h-model">—</span></div>
+          <div class="hc-agent-stat"><span class="hc-label">Policy</span><span id="h-policy">—</span></div>
+          <div class="hc-agent-stat"><span class="hc-label">Evos</span><span id="h-evo">—</span></div>
+          <div class="hc-title" style="margin-top:10px">PLUGINS</div>
+          <div class="hc-plugins" id="h-plugins"></div>
+        </div>
+
+      </div><!-- .home-top -->
+
+      <!-- Sessions bottom -->
+      <div class="home-sessions-bar">
+        <div class="hc-title">RECENT SESSIONS <span id="h-sessions-count" style="font-weight:400;color:var(--text-dim)"></span></div>
+        <div class="hc-sessions" id="h-sessions"></div>
+      </div>
+
+    </div><!-- .home-body -->
   </div>
 
   <!-- ─── Shared modals ───────────────────────────────────────────────────── -->
