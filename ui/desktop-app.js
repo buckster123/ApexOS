@@ -113,6 +113,11 @@ const WIN_DEFAULTS = {
     x: 180, y: 60, width: 680, height: 520,
     background: '#0d0f18',
   },
+  sketchpad: {
+    title: '🎨 Sketchpad',
+    x: 140, y: 60, width: 720, height: 540,
+    background: '#0d0f18',
+  },
   notes: {
     title: '📝 Notes',
     x: 160, y: 70, width: 580, height: 480,
@@ -181,7 +186,8 @@ function openWin(id) {
   content.style.display = '';
 
   if (id === 'terminal') setTimeout(initTerminal, 60);
-  if (id === 'notes')    setTimeout(notesInit, 30);
+  if (id === 'notes')     setTimeout(notesInit, 30);
+  if (id === 'sketchpad') setTimeout(sketchInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -352,6 +358,78 @@ async function termExec(cmd) {
     });
     return await r.json();
   } catch (e) { return { ok: false, error: String(e) }; }
+}
+
+// ─── Sketchpad ────────────────────────────────────────────────────────────────
+let sketchCtx = null, sketchDrawing = false, sketchMode = 'pen';
+
+function sketchInit() {
+  const canvas = document.getElementById('sketch-canvas');
+  if (!canvas || sketchCtx) return;
+  const resize = () => {
+    const img = sketchCtx ? sketchCtx.getImageData(0, 0, canvas.width, canvas.height) : null;
+    canvas.width  = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight;
+    sketchCtx = canvas.getContext('2d');
+    sketchCtx.fillStyle = '#0d0f18';
+    sketchCtx.fillRect(0, 0, canvas.width, canvas.height);
+    if (img) sketchCtx.putImageData(img, 0, 0);
+    sketchCtx.lineJoin = 'round'; sketchCtx.lineCap = 'round';
+  };
+  resize();
+
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const t = e.touches?.[0] ?? e;
+    return [t.clientX - r.left, t.clientY - r.top];
+  };
+  const down = (e) => {
+    sketchDrawing = true;
+    const [x, y] = pos(e);
+    sketchCtx.beginPath(); sketchCtx.moveTo(x, y);
+    e.preventDefault();
+  };
+  const move = (e) => {
+    if (!sketchDrawing) return;
+    const size  = +document.getElementById('sketch-size').value;
+    const color = document.getElementById('sketch-color').value;
+    sketchCtx.lineWidth   = sketchMode === 'erase' ? size * 6 : size;
+    sketchCtx.strokeStyle = sketchMode === 'erase' ? '#0d0f18' : color;
+    const [x, y] = pos(e);
+    sketchCtx.lineTo(x, y); sketchCtx.stroke();
+    sketchCtx.beginPath(); sketchCtx.moveTo(x, y);
+    e.preventDefault();
+  };
+  const up = () => { sketchDrawing = false; };
+
+  canvas.addEventListener('mousedown', down);
+  canvas.addEventListener('mousemove', move);
+  canvas.addEventListener('mouseup',   up);
+  canvas.addEventListener('touchstart', down, { passive: false });
+  canvas.addEventListener('touchmove',  move, { passive: false });
+  canvas.addEventListener('touchend',   up);
+}
+
+function sketchTool(mode) {
+  sketchMode = mode;
+  document.getElementById('sketch-pen-btn')  ?.classList.toggle('active', mode === 'pen');
+  document.getElementById('sketch-erase-btn')?.classList.toggle('active', mode === 'erase');
+}
+
+function sketchClear() {
+  if (!sketchCtx) return;
+  const c = document.getElementById('sketch-canvas');
+  sketchCtx.fillStyle = '#0d0f18';
+  sketchCtx.fillRect(0, 0, c.width, c.height);
+}
+
+function sketchDownload() {
+  const c = document.getElementById('sketch-canvas');
+  if (!c) return;
+  const a = document.createElement('a');
+  a.download = `sketch-${Date.now()}.png`;
+  a.href = c.toDataURL('image/png');
+  a.click();
 }
 
 // ─── Wallpaper ────────────────────────────────────────────────────────────────

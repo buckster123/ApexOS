@@ -90,6 +90,7 @@
       <button class="sm-item" onclick="launchApp('cerebro')"><span class="sm-emoji">🧠</span>Cerebro</button>
       <button class="sm-item" onclick="launchApp('sensorhead')"><span class="sm-emoji">👁</span>Sensor Head</button>
       <button class="sm-item" onclick="launchApp('camera')"><span class="sm-emoji">📷</span>Camera</button>
+      <button class="sm-item" onclick="launchApp('sketchpad')"><span class="sm-emoji">🎨</span>Sketchpad</button>
       <button class="sm-item" onclick="launchApp('notes')"><span class="sm-emoji">📝</span>Notes</button>
       <button class="sm-item" onclick="launchApp('browser')"><span class="sm-emoji">🌐</span>Browser</button>
     </div>
@@ -170,6 +171,19 @@
   <!-- SensorHead window (iframe) -->
   <div id="win-sensorhead-content" class="win-content iframe-win" style="display:none">
     <iframe id="sensorhead-iframe" frameborder="0" allow="same-origin"></iframe>
+  </div>
+
+  <!-- Sketchpad window -->
+  <div id="win-sketchpad-content" class="win-content sketchpad-win" style="display:none">
+    <div class="sketch-toolbar">
+      <input type="color" id="sketch-color" value="#39ff14" title="Colour">
+      <input type="range" id="sketch-size" min="1" max="24" value="3" title="Size">
+      <button class="sketch-btn" onclick="sketchTool('pen')"   id="sketch-pen-btn"   title="Pen">✏</button>
+      <button class="sketch-btn" onclick="sketchTool('erase')" id="sketch-erase-btn" title="Eraser">⬜</button>
+      <button class="sketch-btn" onclick="sketchClear()" title="Clear">🗑</button>
+      <button class="sketch-btn sketch-save" onclick="sketchDownload()" title="Download PNG">⬇ PNG</button>
+    </div>
+    <canvas id="sketch-canvas" class="sketch-canvas"></canvas>
   </div>
 
   <!-- Notes window -->
