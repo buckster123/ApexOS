@@ -58,7 +58,11 @@ while True:
         try: os.unlink(wav)
         except: pass
 
-    if not transcript:
+    # Whisper hallucinates these on silence/music — ignore them
+    HALLUCINATIONS = {"dramatic music", "upbeat music", "music playing", "applause",
+                      "silence", "blank_audio", "thank you", "thanks for watching",
+                      "you", "the", "[music]", "(music)"}
+    if not transcript or any(h in transcript for h in HALLUCINATIONS):
         continue
 
     if PHRASE in transcript:
