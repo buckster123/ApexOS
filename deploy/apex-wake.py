@@ -55,8 +55,10 @@ while True:
     except subprocess.TimeoutExpired:
         transcript = ""
     finally:
-        try: os.unlink(wav)
-        except: pass
+        try:
+            os.unlink(wav)
+        except OSError:
+            pass
 
     # Whisper hallucinates these on silence/music — ignore them
     HALLUCINATIONS = {"dramatic music", "upbeat music", "music playing", "applause",

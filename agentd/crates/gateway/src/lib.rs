@@ -1497,7 +1497,7 @@ async fn mesh_peers_delete_handler(
 // ── Vast.ai API handlers ──────────────────────────────────────────────────────
 
 async fn vast_recipes_handler(
-    State(state): State<GatewayState>,
+    State(_state): State<GatewayState>,
 ) -> impl IntoResponse {
     match load_recipes() {
         Ok(rf) => {
