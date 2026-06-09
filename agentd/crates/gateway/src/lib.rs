@@ -89,6 +89,7 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/evolution/stats",    get(evolution_stats_handler))
         .route("/api/sessions",           get(sessions_handler))
         .route("/api/sessions/active",    get(active_sessions_handler))
+        .route("/api/events/recent",      get(events_recent_handler))
         .route("/api/sessions/{id}/message", post(session_message_handler))
         .route("/api/run",                post(run_command_handler))
         .route("/api/snapshot",           get(snapshot_handler))
@@ -706,6 +707,65 @@ async fn sessions_handler(State(state): State<GatewayState>) -> impl IntoRespons
     });
 
     Json(serde_json::json!(sessions))
+}
+
+// ── event log ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    hours: Option<u64>,
+    types: Option<String>,
+    max:   Option<usize>,
+}
+
+/// GET /api/events/recent — filtered view of the JSONL event log.
+/// Returns a JSON array of raw event objects. Noisy streaming events
+/// (agent_text, tool_result, turn_complete) are excluded by default.
+async fn events_recent_handler(
+    State(state):  State<GatewayState>,
+    Query(params): Query<EventsQuery>,
+) -> impl IntoResponse {
+    const NOISE: &[&str] = &["agent_text", "agent_thinking", "tool_result", "turn_complete"];
+
+    let hours      = params.hours.unwrap_or(24).min(168);
+    let max_events = params.max.unwrap_or(500).min(2000);
+    let type_filter: Option<std::collections::HashSet<String>> =
+        params.types.as_deref().map(|s| s.split(',').map(|t| t.trim().to_owned()).collect());
+
+    let days_back = ((hours as f64) / 24.0).ceil() as i64 + 1;
+    let today = chrono::Local::now().date_naive();
+    let mut date_files: Vec<std::path::PathBuf> = Vec::new();
+    for d in 0..days_back {
+        let date = today - chrono::Duration::days(d);
+        let path = state.events_dir.join(format!("events-{}.jsonl", date.format("%Y-%m-%d")));
+        if tokio::fs::metadata(&path).await.is_ok() {
+            date_files.push(path);
+        }
+    }
+    date_files.reverse();
+
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    for path in &date_files {
+        let Ok(text) = tokio::fs::read_to_string(path).await else { continue };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue }
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let ev_type = val["type"].as_str().unwrap_or("");
+            if NOISE.contains(&ev_type) { continue }
+            if let Some(ref filter) = type_filter {
+                if !filter.contains(ev_type) { continue }
+            }
+            events.push(val);
+        }
+    }
+
+    if events.len() > max_events {
+        let skip = events.len() - max_events;
+        events.drain(0..skip);
+    }
+
+    Json(serde_json::json!(events))
 }
 
 // ── shell passthrough ─────────────────────────────────────────────────────────

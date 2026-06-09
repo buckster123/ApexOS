@@ -232,6 +232,7 @@ async fn main() -> anyhow::Result<()> {
     // Rollback channel: applier receives (session, call_id, evolution_id) requests.
     let (rollback_tx, rollback_rx) = mpsc::channel::<(SessionId, ActionId, EvolutionId)>(16);
     supervisor.set_rollback_tx(rollback_tx);
+    supervisor.set_events_dir(log_dir.clone());
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
     // Agent turn engine — RoutingProvider dispatches per-call based on backend_arc
@@ -1028,6 +1029,7 @@ async fn gather_tools(
     tools.push(cancel_schedule_spec());
     tools.push(convene_council_spec());
     tools.push(send_to_agent_spec());
+    tools.push(query_event_log_spec());
     tools
 }
 
@@ -1245,6 +1247,38 @@ fn convene_council_spec() -> ToolSpec {
                 }
             },
             "required": ["topic", "agents"]
+        }),
+    }
+}
+
+fn query_event_log_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "query_event_log".into(),
+        description: "Query the append-only JSONL event log for recent system activity. \
+                      Returns human-readable summaries of events from the last N hours. \
+                      Use this to answer questions like 'what happened today?', 'when did IAQ last spike?', \
+                      or to collect events for memory ingestion into Cerebro.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type":        "integer",
+                    "description": "How many hours back to query. Default: 24. Max: 168 (1 week).",
+                    "default":     24
+                },
+                "types": {
+                    "type":        "string",
+                    "description": "Comma-separated list of event types to include, e.g. \
+                                   'user_prompt,evolution_applied,sensor_reading'. \
+                                   Omit to include all meaningful event types."
+                },
+                "max": {
+                    "type":        "integer",
+                    "description": "Maximum number of events to return. Default: 500. Max: 2000.",
+                    "default":     500
+                }
+            },
+            "required": []
         }),
     }
 }

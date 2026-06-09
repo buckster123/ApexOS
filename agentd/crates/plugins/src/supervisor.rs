@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::path::PathBuf;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tokio::process::Command;
 use std::process::Stdio;
@@ -76,6 +77,8 @@ pub struct Supervisor {
     council_tx:        Option<mpsc::Sender<(SessionId, ActionId, serde_json::Value)>>,
     /// Shared with engine so read_soul_md returns the live system prompt.
     soul_arc:          Option<Arc<RwLock<String>>>,
+    /// Path to the events log directory so query_event_log can read JSONL files.
+    events_dir:        Option<PathBuf>,
 }
 
 impl Supervisor {
@@ -94,6 +97,7 @@ impl Supervisor {
             soul_arc:          None,
             schedule_tx:       None,
             council_tx:        None,
+            events_dir:        None,
         }
     }
 
@@ -120,6 +124,10 @@ impl Supervisor {
     /// Shares the live soul.md Arc so `read_soul_md` returns current content.
     pub fn set_soul_arc(&mut self, arc: Arc<RwLock<String>>) {
         self.soul_arc = Some(arc);
+    }
+
+    pub fn set_events_dir(&mut self, dir: PathBuf) {
+        self.events_dir = Some(dir);
     }
 
     /// Boot all plugins from config then run the dispatch/supervision loop.
@@ -458,6 +466,78 @@ impl Supervisor {
             return;
         }
 
+        // Virtual tool: query_event_log — reads recent JSONL events and returns
+        // human-readable summaries for agent analysis / Cerebro ingestion.
+        if call.tool == "query_event_log" {
+            let hours      = call.args["hours"].as_u64().unwrap_or(24).min(168);
+            let types_arg  = call.args["types"].as_str().map(str::to_owned);
+            let max_events = call.args["max"].as_u64().unwrap_or(500).min(2000) as usize;
+            let events_dir = self.events_dir.clone();
+            let bus        = self.bus.clone();
+            let call_id    = call.id;
+            tokio::spawn(async move {
+                let Some(dir) = events_dir else {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput { ok: false, content: serde_json::json!("events_dir not configured") },
+                    }).await;
+                    return;
+                };
+
+                let type_filter: Option<std::collections::HashSet<String>> =
+                    types_arg.as_deref().map(|s| s.split(',').map(|t| t.trim().to_owned()).collect());
+
+                // Determine which date files to read based on hours window.
+                let days_back = ((hours as f64) / 24.0).ceil() as u64 + 1;
+                let today = chrono::Local::now().date_naive();
+                let mut date_files: Vec<std::path::PathBuf> = Vec::new();
+                for d in 0..days_back {
+                    let date = today - chrono::Duration::days(d as i64);
+                    let path = dir.join(format!("events-{}.jsonl", date.format("%Y-%m-%d")));
+                    if tokio::fs::metadata(&path).await.is_ok() {
+                        date_files.push(path);
+                    }
+                }
+                date_files.reverse(); // oldest first
+
+                let mut lines: Vec<String> = Vec::new();
+                for path in &date_files {
+                    let Ok(text) = tokio::fs::read_to_string(path).await else { continue };
+                    for line in text.lines() {
+                        let line = line.trim();
+                        if line.is_empty() { continue }
+                        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                        let ev_type = val["type"].as_str().unwrap_or("").to_owned();
+                        if let Some(ref filter) = type_filter {
+                            if !filter.contains(&ev_type) { continue }
+                        }
+                        if let Some(summary) = format_event_line(&val) {
+                            lines.push(summary);
+                        }
+                    }
+                }
+
+                // Take the last max_events lines (most recent).
+                let total = lines.len();
+                if lines.len() > max_events {
+                    lines = lines.split_off(lines.len() - max_events);
+                }
+
+                let text = if lines.is_empty() {
+                    format!("No matching events found in the last {hours}h.")
+                } else {
+                    format!("Last {hours}h event log ({} events, showing {}):\n\n{}",
+                        total, lines.len(), lines.join("\n"))
+                };
+
+                bus.emit(Event::ToolResult {
+                    session, call: call_id,
+                    output: ToolOutput { ok: true, content: serde_json::json!(text) },
+                }).await;
+            });
+            return;
+        }
+
         // Virtual tool: send_to_agent — fire-and-forget async peer-to-peer message.
         if call.tool == "send_to_agent" {
             let to_id   = call.args["session_id"].as_u64().map(SessionId);
@@ -625,4 +705,98 @@ impl Supervisor {
             }
         }
     }
+}
+
+/// Convert a raw event JSON object into a concise human-readable sentence.
+/// Returns None for high-frequency noise events (agent_text, tool_result, etc.)
+fn format_event_line(v: &serde_json::Value) -> Option<String> {
+    let t = v["type"].as_str()?;
+    let line = match t {
+        // Skip streaming noise
+        "agent_text" | "agent_thinking" | "tool_result" | "turn_complete" => return None,
+
+        "user_prompt" => {
+            let session = v["session"].as_u64().unwrap_or(0);
+            let text    = v["text"].as_str().unwrap_or("").chars().take(120).collect::<String>();
+            format!("Session {session}: user said '{text}'")
+        }
+        "tool_requested" => {
+            let session = v["session"].as_u64().unwrap_or(0);
+            let tool    = v["call"]["tool"].as_str().unwrap_or("?");
+            format!("Session {session}: tool '{tool}' called")
+        }
+        "approval_pending" => {
+            let session = v["session"].as_u64().unwrap_or(0);
+            let tool    = v["call"]["tool"].as_str().unwrap_or("?");
+            format!("Session {session}: tool '{tool}' awaiting approval")
+        }
+        "user_approval" => {
+            let session = v["session"].as_u64().unwrap_or(0);
+            let granted = v["granted"].as_bool().unwrap_or(false);
+            format!("Session {session}: approval {}", if granted { "granted" } else { "denied" })
+        }
+        "evolution_proposed" => {
+            let kind   = v["proposal"]["kind"].as_str().unwrap_or("?");
+            let reason = v["proposal"]["reason"].as_str().unwrap_or("");
+            format!("Evolution proposed: {kind} — '{reason}'")
+        }
+        "evolution_applied" => {
+            let kind   = v["proposal"]["kind"].as_str().unwrap_or("?");
+            let reason = v["proposal"]["reason"].as_str().unwrap_or("");
+            format!("Evolution applied: {kind} — '{reason}'")
+        }
+        "evolution_rolled_back" => {
+            format!("Evolution rolled back (id={})", v["id"].as_u64().unwrap_or(0))
+        }
+        "plugin_up" => {
+            let plugin = v["plugin"].as_str().unwrap_or("?");
+            let n      = v["tools"].as_array().map(|a| a.len()).unwrap_or(0);
+            format!("Plugin '{plugin}' started ({n} tools)")
+        }
+        "plugin_down" => {
+            let plugin = v["plugin"].as_str().unwrap_or("?");
+            format!("Plugin '{plugin}' stopped")
+        }
+        "wake_triggered"   => "Wake word triggered".into(),
+        "spawn_agent"      => {
+            let parent = v["parent"].as_u64().unwrap_or(0);
+            let prompt = v["prompt"].as_str().unwrap_or("").chars().take(80).collect::<String>();
+            format!("Session {parent}: spawned sub-agent — '{prompt}'")
+        }
+        "sub_agent_started" => {
+            let child  = v["child"].as_u64().unwrap_or(0);
+            let parent = v["parent"].as_u64().unwrap_or(0);
+            format!("Sub-agent {child} started (parent: {parent})")
+        }
+        "sensor_reading" => {
+            let node    = v["node_id"].as_str().unwrap_or("?");
+            let reading = &v["reading"];
+            if let Some(iaq) = reading["iaq"].as_f64() {
+                let temp = reading["temperature"].as_f64().unwrap_or(0.0);
+                let rh   = reading["humidity"].as_f64().unwrap_or(0.0);
+                format!("Sensor {node}: IAQ={iaq:.0} Temp={temp:.1}°C RH={rh:.0}%")
+            } else {
+                format!("Sensor {node}: {reading}")
+            }
+        }
+        "council_started" => {
+            let id    = v["id"].as_str().unwrap_or("?");
+            let topic = v["topic"].as_str().unwrap_or("");
+            format!("Council '{id}' started: topic='{topic}'")
+        }
+        "council_complete" => {
+            let id    = v["id"].as_str().unwrap_or("?");
+            let synth = v["synthesis"].as_str().unwrap_or("").chars().take(100).collect::<String>();
+            format!("Council '{id}' complete: '{synth}'")
+        }
+        "agent_message" => {
+            let from = v["from"].as_u64().unwrap_or(0);
+            let to   = v["to"].as_u64().unwrap_or(0);
+            let body = v["body"].as_str().unwrap_or("").chars().take(80).collect::<String>();
+            format!("Agent {from} → Agent {to}: '{body}'")
+        }
+        // Unknown event types: show the type name so they appear in results
+        other => format!("[{other}]"),
+    };
+    Some(line)
 }
