@@ -61,6 +61,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~30.~~ ✓ A2A messaging — `send_to_agent` virtual tool; `AgentMessage`+`AgentMessageAck` in core; agent router injects as `UserPrompt` on target session; `POST /api/sessions/{id}/message` gateway route; sub-agent window inbox display (`subagent-inbox-msg`); fire-and-forget, no blocking
 ~~31.~~ ✓ RAG over event log — `query_event_log` virtual tool (hours/types/max params); reads date-rolling JSONL files from events_dir, skips streaming noise, formats each event as a readable sentence; `GET /api/events/recent?hours=24&types=...` gateway route for external consumers; agents can now answer "what happened today?" or batch-store events to Cerebro for semantic search
 ~~32.~~ ✓ Sensor anomaly wakeup — per-type cooldown (default 30 min, `SENSOR_ALERT_COOLDOWN_SECS`); configurable thresholds (`SENSOR_IAQ_THRESHOLD`, `SENSOR_CPU_TEMP_THRESHOLD`, `SENSOR_THERMAL_THRESHOLD`); `ThermalFrame` hotspot detection added; agent router fires `UserPrompt` on threshold crossing, suppressed until cooldown expires; no-spam guaranteed
+~~33.~~ ✓ Event log timeline — desktop window over `GET /api/events/recent`; time range (1h→7d) + type filter + auto-refresh (30s); reverse-chrono list; 16 event types with color-coded badges; sensor readings formatted by kind; frontend-only
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
