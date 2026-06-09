@@ -4,13 +4,14 @@
 
 # ApexOS
 
-**Agent-first operating system layer for Raspberry Pi 5**
+**Self-expanding AI agent colony for Raspberry Pi**
 
-*A single Rust daemon that gives an AI agent eyes, ears, memory, voice, and a body — running entirely at the edge.*
+*Drop one node on a LAN. It finds every other Pi, bootstraps them, and the mesh colonizes itself — while you're still drinking your coffee.*
 
 [![Rust](https://img.shields.io/badge/built_with-Rust-orange?style=flat-square)](https://www.rust-lang.org/)
-[![Platform](https://img.shields.io/badge/platform-Raspberry_Pi_5-red?style=flat-square)](https://www.raspberrypi.com/products/raspberry-pi-5/)
+[![Platform](https://img.shields.io/badge/platform-Raspberry_Pi_5%2F4%2F3B%2B-red?style=flat-square)](https://www.raspberrypi.com/products/raspberry-pi-5/)
 [![Inference](https://img.shields.io/badge/inference-Anthropic_%7C_Ollama_%7C_OpenRouter-blueviolet?style=flat-square)](https://www.anthropic.com/)
+[![Mesh](https://img.shields.io/badge/mesh-mDNS_%7C_auto--bootstrap_%7C_A2A-teal?style=flat-square)](#mesh--multi-node-colony)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 </div>
@@ -21,21 +22,25 @@
 
 Most "AI at the edge" is a cloud service with a thin client bolted onto hardware. ApexOS is the inverse.
 
-The Pi isn't running inference — **it is the agent's body.** A single Rust binary (`agentd`) wires together sensors, memory, voice, tools, and a windowed desktop UI into a coherent whole. The cloud supplies the LLM brain (Anthropic API); everything else lives on the board.
+The Pi isn't running inference — **it is the agent's body.** A single Rust binary (`agentd`) wires together sensors, memory, voice, tools, and a windowed desktop UI into a coherent whole. The cloud supplies the LLM brain; everything else lives on the board.
 
-The result is an agent that:
+Scale to a mesh and it becomes something else entirely. Drop one provisioned node on any LAN — it finds every reachable Pi via mDNS, bootstraps them in parallel, and the colony self-assembles while you watch the logs. Twenty nodes, one human action.
+
+Each agent in the colony:
 - **Sees** the room via thermal camera and RGB cameras
-- **Hears** you via a USB mic and whisper.cpp wake word detection
+- **Hears** via USB mic + whisper.cpp wake word detection
 - **Speaks** back via Piper neural TTS
-- **Remembers** everything via a persistent graph memory system (CerebroCortex)
+- **Remembers** everything via CerebroCortex persistent graph memory
 - **Acts** on the world via 100+ MCP tools (shell, filesystem, HTTP, sensors, music generation)
-- **Evolves itself** — proposes and applies changes to its own system prompt and policy rules
+- **Evolves itself** — live-patches its own soul.md, policy, and plugin manifest
+- **Talks to peers** — cross-node agent-to-agent messaging via the mesh
 - **Wakes on voice** — say "apex" and it listens, responds, speaks
 
 ---
 
 ## Architecture
 
+### Single node
 ```
 ┌─────────────────────────────── Raspberry Pi 5 ───────────────────────────────┐
 │                                                                                │
@@ -62,6 +67,32 @@ The result is an agent that:
                                       │
                               Anthropic API
                           (inference only — no data stored)
+```
+
+### Mesh colony
+```
+         ┌─────────────────────────────────────────────────────┐
+         │                  Local LAN  (mDNS)                   │
+         │                                                       │
+         │   ┌──────────────┐          ┌──────────────┐         │
+         │   │  apex-main   │◄────────►│ apex-kitchen │         │
+         │   │   Pi 5  ★    │  A2A     │    Pi 5      │         │
+         │   │  full node   │          │  full node   │         │
+         │   └──────┬───────┘          └──────────────┘         │
+         │          │  bootstrap_node                            │
+         │          │  (SSH + clone + install.sh)               │
+         │          ▼                                            │
+         │   ┌──────────────┐          ┌──────────────┐         │
+         │   │ apex-garage  │          │  apex-attic  │         │
+         │   │   Pi 3B+     │          │    Pi 4      │         │
+         │   │ sensor node  │          │  full node   │         │
+         │   └──────────────┘          └──────────────┘         │
+         │                                                       │
+         └─────────────────────────────────────────────────────┘
+
+  Each node: one agentd binary, one soul.md, one peers.toml.
+  Discovery: Avahi mDNS (_apexos._tcp). Mesh self-assembles in ~60s.
+  A2A: send_to_agent(node: "apex-kitchen", ...) — HTTP proxied.
 ```
 
 One `Event` type flows through the bus, the event log, and the WebSocket to the browser. Everything is a stream.
@@ -102,6 +133,15 @@ One `Event` type flows through the bus, the event log, and the WebSocket to the 
 - **Sub-agent windows** — each child session gets its own WinBox with streaming output and approval buttons
 - **Home dashboard** — live CPU temp, RAM, disk, IAQ badge, thermal mini-canvas, agent stats
 
+### Mesh & multi-node colony
+- **mDNS discovery** — Avahi advertises `_apexos._tcp`; every node on the LAN appears in the Mesh panel within 60 seconds
+- **Auto-bootstrap** — `bootstrap_node` virtual tool SSHes to a fresh Pi, clones the repo, and backgrounds `install.sh`; returns immediately with PID; no human steps on the target
+- **Self-expanding** — with `MESH_AUTO_BOOTSTRAP=true`, the colony discovers and provisions every reachable Pi automatically; subnet guard (`MESH_SUBNET_GUARD`) keeps it on your /24
+- **Peer registry** — `peers.toml` (atomic write, hot-reloadable); `GET/POST/DELETE /api/mesh/peers`; role tags: `full | sensor | thin`
+- **Cross-node A2A** — `send_to_agent(node: "apex-kitchen", session_id: 0, message: "...")` proxies to the peer's HTTP API; fire-and-forget, no blocking
+- **Mesh panel** — desktop `🕸 Mesh` window: registered peers with open/send/remove, avahi-discovered unregistered nodes with one-click Register, Bootstrap modal, 30s auto-refresh
+- **Tiered hardware** — Pi 5 (full), Pi 4 (full minus heavy local inference), Pi 3B+ (sensor/edge, no Cerebro), Zero W2 (micro sensor bridge); see [`docs/claude/mesh-tiers.md`](docs/claude/mesh-tiers.md)
+
 ### Infrastructure
 - **MCP plugin system** — CerebroCortex, apexos-tools, sensor-head, sonus; 103 tools at runtime
 - **Event log** — append-only JSONL per day, date-rolling, NVMe-backed
@@ -112,14 +152,25 @@ One `Event` type flows through the bus, the event log, and the WebSocket to the 
 
 ## Hardware
 
-Tested on:
+**Primary node (recommended)**
 - **Raspberry Pi 5** (8GB) — Debian trixie, NVMe SSD boot
 - **BME688** — air quality / environment sensor (BSEC2 library)
 - **MLX90640** — 32×24 thermal camera
 - **USB microphone** — any ALSA-compatible device
 - **Camera** — any rpicam-compatible module
 
-The Pi 5 specifically matters: sub-second whisper.cpp transcription, 0.13× real-time Piper synthesis, and thermal at 30s intervals — all concurrent. Pi 4 would struggle.
+The Pi 5 is the right primary node: sub-second whisper.cpp transcription, 0.13× real-time Piper synthesis, and thermal at 30s intervals — all concurrent.
+
+**Mesh nodes (tiered capability)**
+
+| Board | Role | Notes |
+|-------|------|-------|
+| Pi 5 | Full | Everything |
+| Pi 4 | Full | No local Ollama; one-way whisper STT; Cerebro confirmed under council load |
+| Pi 3B+ | Sensor/edge | No Cerebro, no voice. apexos-tools + sensors only. Build ~45 min |
+| Zero W2 | Micro | Experimental; sensor bridge only; 512MB RAM floor |
+
+See [`docs/claude/mesh-tiers.md`](docs/claude/mesh-tiers.md) for detailed capability matrix and role-aware install plan.
 
 ---
 
@@ -143,7 +194,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 
 ## Build roadmap
 
-34 steps, all complete:
+35 steps, all complete:
 
 | # | Feature |
 |---|---------|
@@ -181,12 +232,17 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 | 32 | Sensor anomaly wakeup — per-type cooldown (30 min default); configurable thresholds; `ThermalFrame` hotspot detection; no-spam guaranteed |
 | 33 | Event log timeline — desktop window; time range + type filter + auto-refresh; color-coded badges for 16 event types |
 | 34 | Mobile PWA — `/mobile` touch UI; `manifest.json` → Android home screen; voice I/O; inline approvals; wake word |
+| 35 | **Mesh colony** — mDNS discovery (Avahi); `PeerRegistry` (peers.toml); `bootstrap_node` virtual tool (SSH + clone + nohup install.sh); `list_mesh_peers`; cross-node A2A (`send_to_agent` + `node:` field); desktop Mesh panel; tiered hardware model (Pi 5/4/3B+/Zero) |
 
 ---
 
 ## Philosophy
 
 Current AI deployment is top-down: a general-purpose model in a data centre, thin clients everywhere else. ApexOS is bottom-up. The hardware is the agent's body — not a display terminal, not a retrieval node, a *body*. It has proprioception (sensors), voice, memory, and the ability to rewrite its own behaviour. The cloud supplies cognition; the Pi supplies presence.
+
+Scale to a mesh and the model inverts completely. Drop one node on a LAN. Within 60 seconds it has found every other Pi on the network. In `yolo` mode it bootstraps them all in parallel — simultaneously SSHing, cloning, compiling, registering. The colony self-assembles. The "deployment" is: plug them in.
+
+The cost floor is absurd. Twenty Pi Zero 2Ws as sensor nodes plus two Pi 5 orchestrators runs indefinitely for ~$300, with no cloud dependency, no data leaving the building, and no single point of failure. The agent that runs this colony can, in principle, detect it needs more coverage, order the hardware, and provision the new node when it arrives — zero human steps.
 
 This is what embedded AI looks like when you don't treat the hardware as an afterthought.
 
