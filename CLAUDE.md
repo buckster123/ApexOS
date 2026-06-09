@@ -18,14 +18,13 @@ agentd/           Cargo workspace (binary + 5 library crates)
     plugins/      MCP-over-stdio client + subprocess supervisor + registry
     store/        Append-only JSONL event log to NVMe (date-rolling files)
   config/         plugins.toml + policy.toml (examples, deployed to /etc/agentd/)
-  deploy/         systemd units: agentd.service + cage-kiosk.service
-docs/reference/   Reference Rust snippets from the handoff package (read-only)
+deploy/           systemd units, apex-wake.py, apexos.avahi.service, setup-voice.sh
 docs/claude/      Lazy-loaded sub-MDs (see ## Docs below)
-plans/            Architecture docs and handoff package
+docs/archive/     Pre-implementation planning docs (historical context only)
 ui/               Frontend — CLI skin (index.html/style.css/app.js) + Desktop skin (desktop.html/desktop-style.css/desktop-app.js) + lib/ (WinBox+Alpine+xterm.js, no CDN)
 tools/            Separate Cargo workspace for MCP plugins
   crates/
-    apexos-tools/ Shell + fs + http + sysstat MCP server (deployed to /usr/local/bin/)
+    apexos-tools/ Shell + fs + http + sysstat + audio MCP server (deployed to /usr/local/bin/)
 ```
 
 ## Build order (each step independently testable)
@@ -89,9 +88,8 @@ tools/            Separate Cargo workspace for MCP plugins
 - **Multi-backend env vars**: `AGENTD_BACKEND` (anthropic|ollama|vllm|openrouter, default: anthropic), `AGENTD_OAI_BASE_URL` (default: `http://localhost:11434/v1`), `AGENTD_MODEL` (default: per-backend). All hot-swappable via `POST /api/backend` at runtime — no restart needed.
 
 ## Key files
-- `docs/reference/core_types.rs` — load-bearing types (Event, ToolCall, AgentContext, Message)
-- `docs/reference/state_apply.rs` — SystemState + pure apply() + unit tests → build-order step 1
-- `docs/reference/core_loops.rs` — reference shapes for all three async loops
+- `agentd/crates/core/src/types.rs` — load-bearing types (Event, ToolCall, AgentContext, Message)
+- `agentd/crates/core/src/state.rs` — SystemState + pure apply() + unit tests
 - `agentd/config/policy.toml` — approval model config
 - `agentd/config/plugins.toml` — plugin declarations
 - `plans/agentos-handoff/MASTERPLAN.md` — full architecture reference
