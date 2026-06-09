@@ -337,18 +337,20 @@ deploy/
 
 ---
 
-## 9. Build phases
+## 9. Build phases — ALL COMPLETE
 
-| Phase | What | Testable independently |
-|-------|------|----------------------|
-| 35a | Avahi service file + `install.sh` additions + `GET /api/mesh/nodes` (avahi-browse wrapper) | Yes — `curl /api/mesh/nodes` returns discovered peers |
-| 35b | `peers.toml` struct + `PeerRegistry` hot-reload + `GET/POST/DELETE /api/mesh/peers` | Yes — add peer, verify event on bus |
-| 35c | `bootstrap_node` virtual tool — SSH sequence, polling loop, `ToolProgress` events | Yes — bootstrap a second Pi from agent prompt |
-| 35d | Discovery loop — mDNS poll, `PeerSeen` event, autonomy gate + `MESH_AUTO_BOOTSTRAP` | Yes — plug in Pi, watch log |
-| 35e | Cross-node A2A — `send_to_agent` with `node:` field, HTTP proxy to peer | Yes — send message from main to kitchen node |
+| Phase | What | Status |
+|-------|------|--------|
+| ~~35a~~ | Avahi service + `install.sh` additions + `PeerRegistry` + mesh API routes in gateway | ✓ Done + Pi deployed |
+| ~~35b~~ | Discovery loop — 60s mDNS poll, subnet guard (/24), `PeerSeen`, `MESH_AUTO_BOOTSTRAP` | ✓ Done + Pi deployed |
+| ~~35c~~ | `bootstrap_node` virtual tool (SSH+clone+nohup install.sh) + `list_mesh_peers` | ✓ Done |
+| ~~35d~~ | Cross-node A2A — `send_to_agent` + `node:` field, curl HTTP proxy to peer session | ✓ Done |
+| ~~35e~~ | Desktop mesh panel — peer list, discovered nodes, Bootstrap modal, 30s auto-refresh | ✓ Done |
 
-Phases are independent. 35a and 35b have zero risk. 35c is the exciting one.
-35d and 35e can follow after 35c is proven.
+**Implementation notes (actual vs design):**
+- `bootstrap_node` does NOT poll with ToolProgress — it returns immediately with `nohup` PID. Agent can re-call to check log.
+- 35b was numbered 35b in code but implements the "discovery loop" (originally planned as 35d in the design doc). The build order shifted slightly from the design.
+- ws_url stored as `ws://host:8787` (NO `/ws` path suffix) — critical for HTTP proxy in A2A.
 
 ---
 
