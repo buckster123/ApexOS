@@ -107,3 +107,21 @@ ANTHROPIC_API_KEY=sk-ant-api03-...
 - `PAMName=login` approach fails: logind doesn't propagate XDG_RUNTIME_DIR to the exec'd process, and `%U` in ExecStartPre=+ expands to 0 (root UID), not the service user
 - seatd socket group is `video` on Debian trixie (not `seat` or `_seatd`)
 - `StartLimitIntervalSec`/`StartLimitBurst` belong in `[Unit]`, not `[Service]`
+
+## Power control (reboot / poweroff from UI)
+- `agentd.service` sets `NoNewPrivileges=true`, which **blocks `sudo`** entirely
+  (setuid escalation is denied: "the no new privileges flag is set"). A NOPASSWD
+  sudoers rule for the agentd user is therefore dead code.
+- Gateway `POST /api/power` calls `systemctl reboot|poweroff` **directly, no sudo**.
+  Authorization is granted by `/etc/polkit-1/rules.d/49-agentd-power.rules`
+  (installed by `install.sh`), allowing the `agentd` user the
+  `org.freedesktop.login1.{reboot,reboot-multiple-sessions,power-off,power-off-multiple-sessions}`
+  actions via logind.
+- Non-destructive test: `systemd-run --uid=agentd -p NoNewPrivileges=yes systemctl reboot --when=+90min`
+  should schedule (not deny), then `shutdown -c` / `systemctl reboot --when=cancel`.
+
+## apex-face daemon
+- `apex-face.service` MUST set `WorkingDirectory=/run/apex-face` — lgpio creates
+  its `.lgd-nfy*` notify FIFO in the process CWD; default CWD `/` is unwritable by
+  `apexos` and crash-loops the daemon ("xCreatePipe: Can't set permissions").
+  The dir is provided by `RuntimeDirectory=apex-face`.
