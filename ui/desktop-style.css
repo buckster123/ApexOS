@@ -455,6 +455,13 @@ html, body {
 #sketch-size  { width: 80px; cursor: pointer; }
 .sketch-canvas { flex: 1; min-height: 0; display: block; cursor: crosshair; touch-action: none; }
 
+/* ─── APEX Face widget ───────────────────────────────────────────────────────── */
+.face-win {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; overflow: hidden; background: #080812;
+}
+.face-canvas { display: block; }
+
 /* ─── Notes window ──────────────────────────────────────────────────────────── */
 .notes-win { display: flex; flex-direction: column; padding: 0; }
 .notes-toolbar {

@@ -158,6 +158,9 @@ window.removeWatchedSession = (id) => subAgentOutputs.delete(id);
 
 // ─── Event dispatch ───────────────────────────────────────────────────────────
 function handleEvent(ev) {
+  // Drive the desktop face widget (if present) from every bus event, all sessions.
+  if (typeof window._faceOnEvent === 'function') window._faceOnEvent(ev);
+
   // Agent-to-agent messages: route to destination session window (no `session` field).
   if (ev.type === 'agent_message') {
     const msgEl = document.createElement('div');

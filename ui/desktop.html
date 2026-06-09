@@ -94,6 +94,7 @@
       <div class="sm-section-title">APPLICATIONS</div>
       <button class="sm-item" onclick="launchApp('home')"><span class="sm-emoji">🏠</span>Home</button>
       <button class="sm-item" onclick="launchApp('agent')"><span class="sm-emoji">🤖</span>Agent</button>
+      <button class="sm-item" onclick="launchApp('face')"><span class="sm-emoji">😊</span>Face</button>
       <button class="sm-item" onclick="launchApp('terminal')"><span class="sm-emoji">💻</span>Terminal</button>
       <button class="sm-item" onclick="launchApp('sensors')"><span class="sm-emoji">📡</span>Sensors</button>
       <button class="sm-item" onclick="launchApp('cerebro')"><span class="sm-emoji">🧠</span>Cerebro</button>
@@ -446,6 +447,11 @@
         <div class="inf-builder-hint">Click a HF result to fill model_repo. Then add recipe to recipes.toml manually or ask the agent.</div>
       </div>
     </details>
+  </div>
+
+  <!-- APEX Face widget — software port of deploy/apex-face.py for hosts without the GC9A01A display -->
+  <div id="win-face-content" class="win-content face-win" style="display:none">
+    <canvas id="face-canvas" class="face-canvas"></canvas>
   </div>
 
   <!-- Sub-agent windows spawned dynamically by openSubAgentWin() -->

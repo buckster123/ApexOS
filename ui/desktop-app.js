@@ -83,6 +83,11 @@ const WIN_DEFAULTS = {
     x: 40, y: 56, width: 700, height: 520,
     background: 'var(--wb-bg)',
   },
+  face: {
+    title: '😊 APEX Face',
+    x: 780, y: 300, width: 300, height: 320,
+    background: '#080812',
+  },
   sensors: {
     title: '📡 Sensors',
     x: 760, y: 56, width: 300, height: 420,
@@ -255,6 +260,7 @@ function openWin(id) {
   if (id === 'mesh')      setTimeout(meshInit, 30);
   if (id === 'inference') setTimeout(inferenceInit, 30);
   if (id === 'audio')     setTimeout(audioInit, 30);
+  if (id === 'face')      setTimeout(faceInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -268,6 +274,7 @@ function openWin(id) {
       if (id === 'mesh')      meshStop();
       if (id === 'inference') inferenceStop();
       if (id === 'audio')     audioStop();
+      if (id === 'face')      faceStop();
       delete wins[id];
       removeTaskbarTab(id);
       return false;
@@ -278,9 +285,11 @@ function openWin(id) {
     onrestore()  {
       updateTab(id, 'active');
       if (id === 'terminal' && termFit) setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 30);
+      if (id === 'face') setTimeout(faceResize, 30);
     },
     onresize()   {
       if (id === 'terminal' && termFit) setTimeout(() => { try { termFit.fit(); } catch(e) {} }, 30);
+      if (id === 'face') setTimeout(faceResize, 30);
     },
   });
 
@@ -493,6 +502,213 @@ function applyWallpaper(mode) {
     if (canvas) canvas.style.display = 'none';
     if (logo)   logo.style.opacity   = '0';
   }
+}
+
+// ─── APEX Face widget ─────────────────────────────────────────────────────────
+// Software port of deploy/apex-face.py render_face() to an HTML5 canvas, so APEX
+// always has facial expressions even on hosts without the physical GC9A01A round
+// TFT. The state machine is driven client-side from the same bus events app.js
+// already dispatches (see window._faceOnEvent below) — no backend changes.
+//
+// Geometry is rendered in the daemon's native 240×240 logical space (cx,cy = 120,110)
+// and scaled to the canvas, so the coordinates map 1:1 with the Python source.
+
+const FPAL = {
+  BG:    '#080812',  // deep dark blue-black
+  EYE:   '#39ff14',  // neon green
+  PUPIL: '#000000',
+  MOUTH: '#39ff14',
+  DIM:   '#143c14',
+  ALERT: '#ff3c1e',
+  BLUE:  '#1ea0ff',
+  GOLD:  '#ffc828',
+  WHITE: '#e6e6e6',
+  RING:  '#1e1e32',
+};
+
+let faceCanvas = null, faceCtx = null, faceTimer = null, faceTick = 0;
+let faceState  = 'idle';   // base resting/active state, set by events
+let faceLastActivity = Date.now();
+let faceAlertUntil = 0, faceHappyUntil = 0, faceSpeakUntil = 0;
+
+const FACE_SLEEP_MS = 45000;  // idle this long → drift to sleep
+const FACE_ALERT_MS = 6000;   // alert flash duration
+const FACE_HAPPY_MS = 5000;   // happy flash duration (evolution applied)
+const FACE_SPEAK_MS = 1200;   // keep mouth talking this long after last text delta
+
+function faceSet(state) {
+  faceState = state;
+  faceLastActivity = Date.now();
+}
+
+// Resolve the displayed state from the base state + transient overlays (priority order).
+function faceResolve() {
+  const now = Date.now();
+  if (now < faceAlertUntil) return 'alert';
+  if (now < faceHappyUntil) return 'happy';
+  if (now < faceSpeakUntil) return 'speaking';
+  if (faceState === 'idle' && now - faceLastActivity > FACE_SLEEP_MS) return 'sleeping';
+  return faceState;
+}
+
+// Bus-event hook — called by app.js handleEvent() for every event (all sessions).
+window._faceOnEvent = function(ev) {
+  const now = Date.now();
+  switch (ev.type) {
+    case 'wake_triggered':   faceSet('listening'); break;
+    case 'agent_text':       if (ev.delta) { faceSpeakUntil = now + FACE_SPEAK_MS; faceSet('speaking'); } break;
+    case 'tool_requested':   faceSet('thinking'); break;
+    case 'approval_pending': faceSet('thinking'); break;
+    case 'council_started':  faceSet('thinking'); break;
+    case 'turn_complete':    faceSpeakUntil = 0; faceSet('idle'); break;
+    case 'error':            faceAlertUntil = now + FACE_ALERT_MS; faceSet('alert'); break;
+    case 'evolution_applied':faceHappyUntil = now + FACE_HAPPY_MS; faceSet('happy'); break;
+    case 'sensor_reading': {
+      const r = ev.reading;
+      if (r && r.kind === 'air_quality' && (r.iaq ?? 0) > 150) {
+        faceAlertUntil = now + FACE_ALERT_MS; faceSet('alert');
+      }
+      break;
+    }
+  }
+};
+
+// ── canvas draw helpers (logical 240×240 space) ──
+function fCircle(c, cx, cy, r, color) {
+  if (r <= 0) return;
+  c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.fillStyle = color; c.fill();
+}
+function fEye(c, cx, cy, open = 1.0, color = FPAL.EYE) {
+  fCircle(c, cx, cy, 28, color);
+  fCircle(c, cx, cy, 18 * open, FPAL.PUPIL);
+  if (open > 0.3) fCircle(c, cx, cy, 10, FPAL.PUPIL);
+  if (open > 0.5) fCircle(c, cx - 8, cy - 8, 5, FPAL.WHITE);
+}
+function fSmile(c, cx, cy, color = FPAL.MOUTH) {
+  c.beginPath();
+  for (let i = 0; i <= 12; i++) {
+    const t = Math.PI * i / 12;
+    const x = cx - 30 + 60 * i / 12;
+    const y = cy + 16 * Math.sin(t);
+    i ? c.lineTo(x, y) : c.moveTo(x, y);
+  }
+  c.strokeStyle = color; c.lineWidth = 4; c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke();
+}
+function fNeutral(c, cx, cy, color = FPAL.MOUTH) {
+  c.beginPath(); c.moveTo(cx - 25, cy); c.lineTo(cx + 25, cy);
+  c.strokeStyle = color; c.lineWidth = 4; c.lineCap = 'round'; c.stroke();
+}
+function fOpen(c, cx, cy, h = 12, color = FPAL.MOUTH) {
+  c.beginPath(); c.ellipse(cx, cy, 20, Math.max(1, h / 2), 0, 0, Math.PI * 2);
+  c.fillStyle = color; c.fill();
+}
+
+function faceRender(state, tick) {
+  const c = faceCtx;
+  if (!c) return;
+  c.save();
+  c.fillStyle = FPAL.BG; c.fillRect(0, 0, 240, 240);
+  // circular face boundary
+  c.beginPath(); c.ellipse(119.5, 119.5, 117.75, 117.75, 0, 0, Math.PI * 2);
+  c.strokeStyle = FPAL.RING; c.lineWidth = 2; c.stroke();
+
+  const cx = 120, cy = 110;
+
+  if (state === 'idle') {
+    fEye(c, cx - 45, cy - 20); fEye(c, cx + 45, cy - 20); fSmile(c, cx, cy + 35);
+
+  } else if (state === 'thinking') {
+    const blink = 0.7 + 0.3 * Math.sin(tick * 0.15);
+    fEye(c, cx - 45, cy - 20, blink);
+    fEye(c, cx + 45, cy - 25, blink * 0.8);
+    fNeutral(c, cx, cy + 35);
+    for (let i = 0; i < 3; i++) {
+      c.globalAlpha = ((tick + i * 4) % 12 < 6) ? 1 : 0.3;
+      fCircle(c, cx - 8 + i * 14, cy + 59, 4, FPAL.EYE);
+    }
+    c.globalAlpha = 1;
+
+  } else if (state === 'speaking') {
+    const h = 6 + 10 * Math.abs(Math.sin(tick * 0.4));
+    fEye(c, cx - 45, cy - 20); fEye(c, cx + 45, cy - 20); fOpen(c, cx, cy + 38, h);
+
+  } else if (state === 'alert') {
+    fEye(c, cx - 45, cy - 20, 1, FPAL.ALERT);
+    fEye(c, cx + 45, cy - 20, 1, FPAL.ALERT);
+    fOpen(c, cx, cy + 35, 16, FPAL.ALERT);
+    const pr = 115 - (tick % 10) * 3;
+    if (pr > 50) {
+      c.beginPath(); c.ellipse(cx, cy, pr, pr, 0, 0, Math.PI * 2);
+      c.strokeStyle = FPAL.ALERT; c.lineWidth = 2; c.stroke();
+    }
+
+  } else if (state === 'listening') {
+    fEye(c, cx - 45, cy - 20, 1, FPAL.BLUE);
+    fEye(c, cx + 45, cy - 20, 1, FPAL.BLUE);
+    fNeutral(c, cx, cy + 35, FPAL.BLUE);
+    c.strokeStyle = FPAL.BLUE; c.lineWidth = 2;
+    for (let i = 1; i < 4; i++) {
+      const r = 15 + i * 12;
+      c.globalAlpha = ((tick + i * 3) % 9 < 5) ? 1 : 0.3;
+      c.beginPath(); c.arc(cx - 60, cy, r, -Math.PI / 3, Math.PI / 3); c.stroke();
+      c.beginPath(); c.arc(cx + 60, cy, r, Math.PI * 2 / 3, Math.PI * 4 / 3); c.stroke();
+    }
+    c.globalAlpha = 1;
+
+  } else if (state === 'sleeping') {
+    fEye(c, cx - 45, cy - 20, 0.15, FPAL.DIM);
+    fEye(c, cx + 45, cy - 20, 0.15, FPAL.DIM);
+    fNeutral(c, cx, cy + 35, FPAL.DIM);
+    c.fillStyle = FPAL.DIM; c.textAlign = 'left';
+    c.font = '14px monospace'; c.fillText('z', cx + 50, cy - 46);
+    c.font = '18px monospace'; c.fillText('Z', cx + 60, cy - 60);
+    c.font = '22px monospace'; c.fillText('Z', cx + 72, cy - 78);
+
+  } else if (state === 'happy') {
+    fEye(c, cx - 45, cy - 20, 1, FPAL.GOLD);
+    fEye(c, cx + 45, cy - 20, 1, FPAL.GOLD);
+    fSmile(c, cx, cy + 35, FPAL.GOLD);
+    c.fillStyle = FPAL.GOLD; c.font = '14px serif'; c.textAlign = 'center';
+    for (let i = 0; i < 4; i++) {
+      const a = (tick * 3 + i * 90) * Math.PI / 180;
+      c.fillText('✦', cx + 85 * Math.cos(a), cy + 85 * Math.sin(a) + 5);
+    }
+    c.textAlign = 'left';
+  }
+
+  c.restore();
+}
+
+function faceResize() {
+  if (!faceCanvas || !faceCtx) return;
+  const parent = faceCanvas.parentElement;
+  const size = Math.max(80, Math.min(parent.clientWidth, parent.clientHeight));
+  const dpr  = window.devicePixelRatio || 1;
+  faceCanvas.width  = size * dpr;
+  faceCanvas.height = size * dpr;
+  faceCanvas.style.width  = size + 'px';
+  faceCanvas.style.height = size + 'px';
+  const s = dpr * size / 240;
+  faceCtx.setTransform(s, 0, 0, s, 0, 0);  // map 240×240 logical space → canvas
+}
+
+function faceFrame() {
+  faceTick++;
+  faceRender(faceResolve(), faceTick);
+}
+
+function faceInit() {
+  faceCanvas = document.getElementById('face-canvas');
+  if (!faceCanvas) return;
+  faceCtx = faceCanvas.getContext('2d');
+  faceResize();
+  if (!faceTimer) faceTimer = setInterval(faceFrame, 120);  // ~8 fps, matches daemon
+  faceFrame();
+}
+
+function faceStop() {
+  clearInterval(faceTimer);
+  faceTimer = null;
 }
 
 // ─── Notes window ─────────────────────────────────────────────────────────────
