@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="manifest" href="/manifest.json">
+<title>ApexOS</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0a0a0a;
+  --bg2:     #111;
+  --bg3:     #1a1a1a;
+  --border:  #2a2a2a;
+  --text:    #e0e0e0;
+  --dim:     #666;
+  --accent:  #39ff14;
+  --accent2: #00cfff;
+  --red:     #e05050;
+  --orange:  #ff9800;
+  --radius:  10px;
+}
+
+html, body {
+  height: 100%;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Layout ── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  height: 100dvh;
+}
+
+/* ── Status bar ── */
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#conn-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+#conn-dot.ok  { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+#conn-dot.warn { background: var(--orange); }
+
+#status-model {
+  flex: 1;
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#policy-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+#speaker-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#speaker-btn.off { opacity: 0.35; }
+
+/* ── Chat area ── */
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scroll-behavior: smooth;
+}
+
+/* ── Messages ── */
+.msg-user {
+  align-self: flex-end;
+  background: #0d2d0d;
+  border: 1px solid #1a4d1a;
+  color: var(--accent);
+  padding: 9px 12px;
+  border-radius: var(--radius) var(--radius) 3px var(--radius);
+  max-width: 85%;
+  word-break: break-word;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.msg-agent {
+  align-self: flex-start;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 12px;
+  border-radius: var(--radius) var(--radius) var(--radius) 3px;
+  max-width: 92%;
+  word-break: break-word;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.msg-agent .cursor {
+  display: inline-block;
+  width: 8px; height: 14px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.msg-sys {
+  align-self: center;
+  font-size: 11px;
+  color: var(--dim);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg2);
+}
+
+/* ── Tool call cards ── */
+.tool-card {
+  align-self: flex-start;
+  background: #0a1520;
+  border: 1px solid #1a3045;
+  border-radius: var(--radius);
+  max-width: 92%;
+  overflow: hidden;
+}
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tool-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--accent2);
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-status {
+  font-size: 13px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.tool-status.ok  { color: var(--accent); }
+.tool-status.err { color: var(--red); }
+.tool-arrow {
+  font-size: 10px;
+  color: var(--dim);
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.tool-arrow.open { transform: rotate(180deg); }
+.tool-body {
+  display: none;
+  padding: 0 12px 10px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.tool-body.open { display: block; }
+.tool-args {
+  background: #060d14;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  max-height: 120px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tool-result {
+  margin-top: 6px;
+  background: #060d14;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  max-height: 160px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  color: var(--text);
+}
+.tool-result.err { color: var(--red); }
+
+/* ── Approval card ── */
+.approval-card {
+  align-self: stretch;
+  background: #1a0a00;
+  border: 1px solid var(--orange);
+  border-radius: var(--radius);
+  padding: 12px;
+  max-width: 100%;
+}
+.approval-title {
+  font-size: 12px;
+  color: var(--orange);
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+.approval-tool {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.approval-args {
+  font-size: 11px;
+  color: var(--dim);
+  background: #0d0600;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 100px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 10px;
+}
+.approval-btns {
+  display: flex;
+  gap: 10px;
+}
+.btn-approve, .btn-deny {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+  letter-spacing: 1px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.btn-approve { background: #1a3d1a; color: var(--accent); border: 1px solid #2a5d2a; }
+.btn-deny    { background: #3d1a1a; color: var(--red);    border: 1px solid #5d2a2a; }
+.approval-done {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 6px 0;
+  text-align: center;
+}
+
+/* ── Input area ── */
+#inputbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#prompt {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  resize: none;
+  outline: none;
+  max-height: 120px;
+  min-height: 42px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  transition: border-color 0.2s;
+  line-height: 1.4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+#prompt:focus { border-color: var(--accent2); }
+#prompt::placeholder { color: var(--dim); }
+
+.icon-btn {
+  width: 44px; height: 44px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 20px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.icon-btn:active { background: var(--bg); }
+
+#mic-btn.recording {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px #e0505044;
+  animation: mic-pulse 1s infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px #e0505044; }
+  50%       { box-shadow: 0 0 0 6px #e0505000; }
+}
+
+#send-btn {
+  background: #0d2d0d;
+  border-color: #1a4d1a;
+  color: var(--accent);
+}
+#send-btn:active { background: #0a200a; }
+#send-btn:disabled { opacity: 0.35; }
+
+/* ── Key entry overlay ── */
+#key-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.92);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 24px;
+  gap: 16px;
+}
+#key-overlay.hidden { display: none; }
+#key-overlay h2 { font-size: 16px; color: var(--accent); letter-spacing: 2px; }
+#key-overlay p  { font-size: 12px; color: var(--dim); text-align: center; }
+#key-input {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 12px;
+  outline: none;
+}
+#key-input:focus { border-color: var(--accent2); }
+#key-submit {
+  width: 100%;
+  background: #0d2d0d;
+  border: 1px solid #2a5d2a;
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 12px;
+  cursor: pointer;
+  letter-spacing: 2px;
+}
+
+/* ── Scrollbar (thin on mobile) ── */
+#chat::-webkit-scrollbar { width: 4px; }
+#chat::-webkit-scrollbar-track { background: transparent; }
+#chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="key-overlay">
+  <h2>APEX OS</h2>
+  <p>Enter your Anthropic API key to connect.</p>
+  <input id="key-input" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+  <button id="key-submit">CONNECT</button>
+</div>
+
+<div id="app">
+  <div id="statusbar">
+    <div id="conn-dot"></div>
+    <div id="status-model">APEX OS</div>
+    <div id="policy-badge">suggest</div>
+    <button id="speaker-btn" class="off" title="Agent voice">🔊</button>
+  </div>
+
+  <div id="chat"></div>
+
+  <div id="inputbar">
+    <textarea id="prompt" rows="1" placeholder="message apex..." autocomplete="off" spellcheck="false"></textarea>
+    <button id="mic-btn" class="icon-btn" title="Voice input">🎤</button>
+    <button id="send-btn" class="icon-btn" title="Send">▲</button>
+  </div>
+</div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const WS_URL = `ws://${location.host}/ws`;
+const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let SESSION_ID   = null;
+let ws           = null;
+let reconnectIdx = 0;
+let reconnTimer  = null;
+let activeTurn   = null;      // { el, cursor }
+let toolBlocks   = new Map(); // call_id → .tool-card element
+
+let speakerOn      = false;
+let agentTurnText  = '';
+let micServerActive = false;
+let micRecorder    = null;
+let micChunks      = [];
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const chat = () => $('chat');
+
+function scrollBottom() {
+  const c = chat();
+  c.scrollTop = c.scrollHeight;
+}
+
+function sysMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg-sys';
+  el.textContent = text;
+  chat().appendChild(el);
+  scrollBottom();
+}
+
+function setConn(state) {
+  const dot = $('conn-dot');
+  dot.className = state;
+}
+
+// ─── Key entry ────────────────────────────────────────────────────────────────
+async function checkKey() {
+  try {
+    const r = await fetch('/api/keys');
+    if (r.ok) {
+      const d = await r.json();
+      if (d.anthropic_set) { $('key-overlay').classList.add('hidden'); return; }
+    }
+  } catch {}
+  $('key-overlay').classList.remove('hidden');
+}
+
+async function submitKey() {
+  const val = $('key-input').value.trim();
+  if (!val) return;
+  try {
+    const r = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ anthropic: val }),
+    });
+    if (r.ok) {
+      $('key-overlay').classList.add('hidden');
+      connect();
+    }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ─── Status bar ───────────────────────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.model) {
+      const short = d.model.replace('claude-', '').replace(/-\d{8}$/, '');
+      $('status-model').textContent = short.toUpperCase();
+    }
+    if (d.policy_mode) $('policy-badge').textContent = d.policy_mode;
+  } catch {}
+}
+
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+function connect() {
+  setConn('warn');
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    reconnectIdx = 0;
+    setConn('ok');
+    const storedId = localStorage.getItem('apexos_mobile_session');
+    const hello = storedId
+      ? { type: 'hello', resume_session: Number(storedId) }
+      : { type: 'hello' };
+    ws.send(JSON.stringify(hello));
+    refreshStatus();
+  };
+
+  ws.onmessage = e => {
+    try { handleEvent(JSON.parse(e.data)); } catch {}
+  };
+
+  ws.onclose = ws.onerror = () => {
+    setConn('');
+    if (!reconnTimer) {
+      const delay = RECONNECT_DELAYS[Math.min(reconnectIdx, RECONNECT_DELAYS.length - 1)];
+      reconnectIdx++;
+      reconnTimer = setTimeout(() => { reconnTimer = null; connect(); }, delay);
+    }
+  };
+}
+
+function sendWs(obj) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// ─── Send prompt ──────────────────────────────────────────────────────────────
+function sendPrompt() {
+  const el   = $('prompt');
+  const text = el.value.trim();
+  if (!text || !SESSION_ID) return;
+  if (ws?.readyState !== WebSocket.OPEN) { sysMsg('not connected'); return; }
+
+  // User bubble
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-user';
+  bubble.textContent = text;
+  chat().appendChild(bubble);
+
+  el.value = '';
+  el.style.height = '';
+  scrollBottom();
+
+  sendWs({ type: 'user_prompt', session: SESSION_ID, text });
+  $('send-btn').disabled = true;
+}
+
+// ─── Event handler ────────────────────────────────────────────────────────────
+function handleEvent(ev) {
+  if (ev.type === 'session_init') {
+    SESSION_ID = ev.session_id;
+    localStorage.setItem('apexos_mobile_session', SESSION_ID);
+    $('send-btn').disabled = false;
+    return;
+  }
+
+  // Only handle our session (or daemon-scoped null)
+  if (SESSION_ID !== null && ev.session != null && ev.session !== SESSION_ID) return;
+
+  switch (ev.type) {
+
+    case 'agent_text': {
+      if (!activeTurn) {
+        const el = document.createElement('div');
+        el.className = 'msg-agent';
+        const cursor = document.createElement('span');
+        cursor.className = 'cursor';
+        el.appendChild(cursor);
+        chat().appendChild(el);
+        activeTurn = { el, cursor };
+        toolBlocks = new Map();
+      }
+      if (ev.delta) {
+        const { el, cursor } = activeTurn;
+        const text = document.createTextNode(ev.delta);
+        el.insertBefore(text, cursor);
+        agentTurnText += ev.delta;
+        scrollBottom();
+      }
+      break;
+    }
+
+    case 'turn_complete': {
+      if (activeTurn) {
+        activeTurn.cursor.remove();
+        activeTurn = null;
+      }
+      $('send-btn').disabled = false;
+      if (agentTurnText.trim() && speakerOn) speakText(agentTurnText.trim());
+      agentTurnText = '';
+      break;
+    }
+
+    case 'tool_requested': {
+      if (!ev.call) break;
+      // Close any active text turn
+      if (activeTurn) { activeTurn.cursor.remove(); activeTurn = null; }
+
+      const card = makeToolCard(ev.call.id, ev.call.tool, ev.call.input);
+      chat().appendChild(card);
+      toolBlocks.set(String(ev.call.id), card);
+      scrollBottom();
+      break;
+    }
+
+    case 'tool_result': {
+      const card = toolBlocks.get(String(ev.call));
+      if (card) {
+        const statusEl = card.querySelector('.tool-status');
+        if (statusEl) {
+          statusEl.className = `tool-status ${ev.output.ok ? 'ok' : 'err'}`;
+          statusEl.textContent = ev.output.ok ? '✓' : '✗';
+        }
+        const body = card.querySelector('.tool-body');
+        if (body) {
+          const res = document.createElement('div');
+          res.className = `tool-result${ev.output.ok ? '' : ' err'}`;
+          const content = ev.output.content;
+          const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+          res.textContent = text.length > 400 ? text.slice(0, 400) + '\n…' : text;
+          body.appendChild(res);
+        }
+      }
+      break;
+    }
+
+    case 'approval_pending': {
+      if (!ev.call) break;
+      if (activeTurn) { activeTurn.cursor.remove(); activeTurn = null; }
+      chat().appendChild(makeApprovalCard(ev.call));
+      scrollBottom();
+      break;
+    }
+
+    case 'wake_triggered': {
+      onWakeTriggered();
+      break;
+    }
+
+    case 'error': {
+      sysMsg('error: ' + (ev.message || JSON.stringify(ev)));
+      $('send-btn').disabled = false;
+      break;
+    }
+  }
+}
+
+// ─── Tool card ────────────────────────────────────────────────────────────────
+function makeToolCard(id, tool, input) {
+  const card = document.createElement('div');
+  card.className = 'tool-card';
+
+  const argsStr = JSON.stringify(input, null, 2);
+  card.innerHTML = `
+    <div class="tool-header">
+      <span class="tool-name">${esc(tool)}</span>
+      <span class="tool-status">…</span>
+      <span class="tool-arrow">▾</span>
+    </div>
+    <div class="tool-body">
+      <div class="tool-args">${esc(argsStr)}</div>
+    </div>
+  `;
+
+  const header = card.querySelector('.tool-header');
+  const body   = card.querySelector('.tool-body');
+  const arrow  = card.querySelector('.tool-arrow');
+  header.addEventListener('click', () => {
+    const open = body.classList.toggle('open');
+    arrow.classList.toggle('open', open);
+  });
+  return card;
+}
+
+// ─── Approval card ────────────────────────────────────────────────────────────
+function makeApprovalCard(call) {
+  const card = document.createElement('div');
+  card.className = 'approval-card';
+
+  const argsStr = JSON.stringify(call.input, null, 2);
+  const inner = document.createElement('div');
+  inner.innerHTML = `
+    <div class="approval-title">⚠ APPROVAL REQUIRED</div>
+    <div class="approval-tool">${esc(call.tool)}</div>
+    <div class="approval-args">${esc(argsStr)}</div>
+  `;
+
+  const btns = document.createElement('div');
+  btns.className = 'approval-btns';
+
+  const approve = document.createElement('button');
+  approve.className = 'btn-approve';
+  approve.textContent = 'APPROVE';
+  approve.addEventListener('click', () => {
+    sendWs({ type: 'user_approval', session: SESSION_ID, action: call.id, granted: true });
+    card.innerHTML = `<div class="approval-done">✓ approved: ${esc(call.tool)}</div>`;
+  });
+
+  const deny = document.createElement('button');
+  deny.className = 'btn-deny';
+  deny.textContent = 'DENY';
+  deny.addEventListener('click', () => {
+    sendWs({ type: 'user_approval', session: SESSION_ID, action: call.id, granted: false });
+    card.innerHTML = `<div class="approval-done">✗ denied: ${esc(call.tool)}</div>`;
+  });
+
+  btns.appendChild(approve);
+  btns.appendChild(deny);
+  card.appendChild(inner);
+  card.appendChild(btns);
+  return card;
+}
+
+// ─── Voice ────────────────────────────────────────────────────────────────────
+async function micToggle() {
+  const btn = $('mic-btn');
+
+  // Stop server recording
+  if (micServerActive) {
+    micServerActive = false;
+    btn.classList.remove('recording');
+    btn.textContent = '⏳';
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/record/stop', { method: 'POST' });
+      if (r.ok) {
+        const { text } = await r.json();
+        if (text && text.trim()) {
+          $('prompt').value = (($('prompt').value || '') + ' ' + text.trim()).trim();
+          autoResizePrompt();
+        }
+      }
+    } catch {}
+    finally { btn.textContent = '🎤'; btn.disabled = false; }
+    return;
+  }
+
+  // Stop browser recording
+  if (micRecorder && micRecorder.state === 'recording') {
+    micRecorder.stop();
+    return;
+  }
+
+  // Try server-side first
+  try {
+    const r = await fetch('/api/record/start', { method: 'POST' });
+    if (r.ok) {
+      micServerActive = true;
+      btn.classList.add('recording');
+      btn.textContent = '⏹';
+      return;
+    }
+  } catch {}
+
+  // Fallback: browser MediaRecorder
+  if (!navigator.mediaDevices) {
+    sysMsg('mic requires HTTPS or localhost');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micChunks = [];
+    micRecorder = new MediaRecorder(stream);
+    micRecorder.ondataavailable = e => { if (e.data.size > 0) micChunks.push(e.data); };
+    micRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      btn.classList.remove('recording');
+      btn.textContent = '⏳';
+      btn.disabled = true;
+      try {
+        const blob = new Blob(micChunks, { type: 'audio/webm' });
+        const r = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'audio/webm' },
+          body: await blob.arrayBuffer(),
+        });
+        if (r.ok) {
+          const { text } = await r.json();
+          if (text && text.trim()) {
+            $('prompt').value = (($('prompt').value || '') + ' ' + text.trim()).trim();
+            autoResizePrompt();
+          }
+        }
+      } catch {}
+      finally { btn.textContent = '🎤'; btn.disabled = false; }
+    };
+    micRecorder.start();
+    btn.classList.add('recording');
+    btn.textContent = '⏹';
+  } catch (e) { sysMsg('mic denied: ' + e.message); }
+}
+
+function speakText(text) {
+  if (!text.trim()) return;
+  fetch('/api/speak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).catch(() => {});
+}
+
+// Wake word triggered — auto-record 7s then submit
+const WAKE_SECS = 7;
+let wakeTimer = null;
+
+async function onWakeTriggered() {
+  const btn = $('mic-btn');
+  if (!speakerOn) {
+    speakerOn = true;
+    $('speaker-btn').classList.remove('off');
+  }
+  btn.classList.add('recording');
+  btn.textContent = '⏹';
+  micServerActive = true;
+  try { await fetch('/api/record/start', { method: 'POST' }); } catch { return; }
+  wakeTimer = setTimeout(async () => {
+    wakeTimer = null;
+    micServerActive = false;
+    btn.classList.remove('recording');
+    btn.textContent = '⏳';
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/record/stop', { method: 'POST' });
+      if (r.ok) {
+        const { text } = await r.json();
+        if (text && text.trim()) {
+          $('prompt').value = text.trim();
+          sendPrompt();
+        }
+      }
+    } catch {}
+    finally { btn.textContent = '🎤'; btn.disabled = false; }
+  }, WAKE_SECS * 1000);
+}
+
+// ─── Textarea auto-resize ─────────────────────────────────────────────────────
+function autoResizePrompt() {
+  const el = $('prompt');
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  await checkKey();
+  connect();
+
+  $('send-btn').disabled = true;
+
+  // Send on button tap
+  $('send-btn').addEventListener('click', sendPrompt);
+
+  // Send on Enter (not Shift+Enter)
+  $('prompt').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendPrompt();
+    }
+  });
+  $('prompt').addEventListener('input', autoResizePrompt);
+
+  $('mic-btn').addEventListener('click', micToggle);
+
+  $('speaker-btn').addEventListener('click', () => {
+    speakerOn = !speakerOn;
+    $('speaker-btn').classList.toggle('off', !speakerOn);
+  });
+
+  $('key-submit').addEventListener('click', submitKey);
+  $('key-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitKey();
+  });
+});
+</script>
+</body>
+</html>

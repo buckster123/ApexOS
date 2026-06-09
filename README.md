@@ -143,7 +143,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 
 ## Build roadmap
 
-33 steps, all complete:
+34 steps, all complete:
 
 | # | Feature |
 |---|---------|
@@ -180,6 +180,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 | 31 | RAG over event log — `query_event_log` virtual tool; `GET /api/events/recent`; agents can query and digest system history |
 | 32 | Sensor anomaly wakeup — per-type cooldown (30 min default); configurable thresholds; `ThermalFrame` hotspot detection; no-spam guaranteed |
 | 33 | Event log timeline — desktop window; time range + type filter + auto-refresh; color-coded badges for 16 event types |
+| 34 | Mobile PWA — `/mobile` touch UI; `manifest.json` → Android home screen; voice I/O; inline approvals; wake word |
 
 ---
 

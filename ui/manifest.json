@@ -1,0 +1,11 @@
+{
+  "name": "ApexOS",
+  "short_name": "ApexOS",
+  "description": "Agent-first OS daemon — Pi 5 edge AI",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": []
+}

@@ -250,7 +250,11 @@ async fn static_handler(
     uri: axum::http::Uri,
 ) -> Response {
     let path = uri.path().trim_start_matches('/');
-    let file_name = if path.is_empty() { "index.html" } else { path };
+    let file_name = match path {
+        "" => "index.html",
+        "mobile" => "mobile.html",
+        other => other,
+    };
 
     // Block path traversal
     if file_name.contains("..") {
@@ -265,10 +269,12 @@ async fn static_handler(
         match file_name {
             "index.html"        => "text/html; charset=utf-8",
             "desktop.html"      => "text/html; charset=utf-8",
+            "mobile.html"       => "text/html; charset=utf-8",
             "style.css"         => "text/css; charset=utf-8",
             "desktop-style.css" => "text/css; charset=utf-8",
             "app.js"            => "application/javascript; charset=utf-8",
             "desktop-app.js"    => "application/javascript; charset=utf-8",
+            "manifest.json"     => "application/manifest+json; charset=utf-8",
             _                   => return StatusCode::NOT_FOUND.into_response(),
         }
     };
