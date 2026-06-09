@@ -897,9 +897,19 @@ fn spawn_agent_router(
     session_store: Arc<SessionStore>,
 ) {
     // Per-session abort handles and parent-child tree for cascade cancellation.
-    let abort_handles    = Arc::new(Mutex::new(HashMap::<SessionId, AbortHandle>::new()));
+    // Handles carry a generation so a turn that finishes late doesn't evict the
+    // handle of a newer turn that reused the same SessionId (root sessions are
+    // re-prompted; ids recur). Cleanup removes an entry only if the gen matches.
+    let abort_handles    = Arc::new(Mutex::new(HashMap::<SessionId, (u64, AbortHandle)>::new()));
     let session_children = Arc::new(Mutex::new(HashMap::<SessionId, Vec<SessionId>>::new()));
     let session_depths   = Arc::new(Mutex::new(HashMap::<SessionId, u32>::new()));
+    // Monotonic generation for abort-handle entries (see above).
+    let next_turn_gen    = Arc::new(AtomicU64::new(1));
+    let tracker = SessionTracker {
+        abort_handles:    abort_handles.clone(),
+        session_children: session_children.clone(),
+        session_depths:   session_depths.clone(),
+    };
     // Internal session IDs use the top half of u64 to avoid collisions with
     // frontend-assigned IDs (which come in via UserPrompt).
     let next_child_id    = Arc::new(AtomicU64::new(1u64 << 63));
@@ -938,12 +948,14 @@ fn spawn_agent_router(
                     }
 
                     let tools  = gather_tools(&tool_reg).await;
+                    let gen    = next_turn_gen.fetch_add(1, Ordering::SeqCst);
                     let handle = tokio::spawn(root_turn(
                         session, snapshot,
                         bus.clone(), bcast.clone(), tools, engine.clone(),
                         histories.clone(), Arc::clone(&session_store), snapshot_len,
+                        tracker.clone(), gen,
                     ));
-                    abort_handles.lock().await.insert(session, handle.abort_handle());
+                    abort_handles.lock().await.insert(session, (gen, handle.abort_handle()));
                 }
 
                 // ── sub-agent spawn ──────────────────────────────────────────
@@ -985,12 +997,14 @@ fn spawn_agent_router(
                     let child_engine = Arc::new(engine.with_system(system));
                     let tools        = gather_tools(&tool_reg).await;
 
+                    let gen    = next_turn_gen.fetch_add(1, Ordering::SeqCst);
                     let handle = tokio::spawn(child_turn(
                         child_id, child_history,
                         bus.clone(), bcast.clone(), tools, child_engine,
                         histories.clone(), parent, call_id,
+                        tracker.clone(), gen,
                     ));
-                    abort_handles.lock().await.insert(child_id, handle.abort_handle());
+                    abort_handles.lock().await.insert(child_id, (gen, handle.abort_handle()));
                 }
 
                 // ── agent-to-agent message routing ───────────────────────────
@@ -1080,6 +1094,8 @@ async fn root_turn(
     histories:     Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
     session_store: Arc<SessionStore>,
     snapshot_len:  usize,
+    tracker:       SessionTracker,
+    gen:           u64,
 ) {
     match run_turn(session, history, bus.clone(), bcast, tools, engine).await {
         Ok(updated) => {
@@ -1100,6 +1116,8 @@ async fn root_turn(
             bus.emit(Event::TurnComplete { session }).await;
         }
     }
+    // Drop our abort handle (gen-checked so a newer turn's handle survives).
+    tracker.finish(session, gen).await;
 }
 
 async fn child_turn(
@@ -1112,6 +1130,8 @@ async fn child_turn(
     histories: Arc<Mutex<HashMap<SessionId, Vec<Message>>>>,
     parent:    SessionId,
     call_id:   ActionId,
+    tracker:   SessionTracker,
+    gen:       u64,
 ) {
     let output = match run_turn(child_id, history, bus.clone(), bcast, tools, engine).await {
         Ok(updated) => {
@@ -1123,6 +1143,8 @@ async fn child_turn(
     };
     // Route child output back as a ToolResult so parent's collect_tool_results unblocks.
     bus.emit(Event::ToolResult { session: parent, call: call_id, output }).await;
+    // Tear down this sub-agent's bookkeeping (unique child id → race-free).
+    tracker.finish_child(child_id, parent, gen).await;
 }
 
 // ── utilities ─────────────────────────────────────────────────────────────────
@@ -1555,10 +1577,45 @@ fn extract_final_text(history: &[Message]) -> String {
         .unwrap_or_default()
 }
 
+/// Bundles the per-session bookkeeping maps so turn tasks can self-clean on
+/// completion without ballooning their argument lists. All fields are shared
+/// Arc clones of the router's maps.
+#[derive(Clone)]
+struct SessionTracker {
+    abort_handles:    Arc<Mutex<HashMap<SessionId, (u64, AbortHandle)>>>,
+    session_children: Arc<Mutex<HashMap<SessionId, Vec<SessionId>>>>,
+    session_depths:   Arc<Mutex<HashMap<SessionId, u32>>>,
+}
+
+impl SessionTracker {
+    /// Remove a session's abort handle iff this turn's generation still owns it.
+    /// Prevents a turn that finishes late from evicting a newer turn that reused
+    /// the same SessionId.
+    async fn finish(&self, sid: SessionId, gen: u64) {
+        let mut h = self.abort_handles.lock().await;
+        if h.get(&sid).map(|(g, _)| *g == gen).unwrap_or(false) {
+            h.remove(&sid);
+        }
+    }
+
+    /// Full teardown for a finished sub-agent: gen-checked handle, depth, its own
+    /// subtree list, and its link in the parent's child list. child ids are unique
+    /// (never reused) so these removals can't race a newer turn.
+    async fn finish_child(&self, child: SessionId, parent: SessionId, gen: u64) {
+        self.finish(child, gen).await;
+        self.session_depths.lock().await.remove(&child);
+        let mut sc = self.session_children.lock().await;
+        sc.remove(&child);
+        if let Some(v) = sc.get_mut(&parent) {
+            v.retain(|c| *c != child);
+        }
+    }
+}
+
 async fn cascade_cancel(
     session:          SessionId,
     session_children: &Arc<Mutex<HashMap<SessionId, Vec<SessionId>>>>,
-    abort_handles:    &Arc<Mutex<HashMap<SessionId, AbortHandle>>>,
+    abort_handles:    &Arc<Mutex<HashMap<SessionId, (u64, AbortHandle)>>>,
 ) {
     // Walk the subtree breadth-first.
     let mut to_cancel = vec![session];
@@ -1574,7 +1631,7 @@ async fn cascade_cancel(
 
     let mut handles = abort_handles.lock().await;
     for s in &to_cancel {
-        if let Some(h) = handles.remove(s) {
+        if let Some((_, h)) = handles.remove(s) {
             h.abort();
             eprintln!("[agent:{:?}] cancelled", s);
         }
