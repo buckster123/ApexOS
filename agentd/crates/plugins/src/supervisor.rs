@@ -7,6 +7,7 @@ use apexos_core::{ActionId, BusHandle, Event, EvolutionId, EvolutionProposal, Pl
 use crate::config::{PluginConfig, RestartPolicy};
 use crate::mcp::McpClient;
 use crate::policy::{Decision, PolicyEngine};
+use crate::vast::{VastState, VastPhase, VastInstance, vastai, load_recipes};
 
 struct Plugin {
     client: Arc<McpClient>,
@@ -34,6 +35,8 @@ pub enum SupervisorCmd {
     SetScheduleTx { tx: mpsc::Sender<(SessionId, ActionId, String, serde_json::Value)> },
     /// Wire the council op channel so convene_council routes to the council handler.
     SetCouncilTx  { tx: mpsc::Sender<(SessionId, ActionId, serde_json::Value)> },
+    /// Wire the VastState Arc so vast_* virtual tools can read/write instance state.
+    SetVastState  { state: VastState },
 }
 
 /// Thin handle for calling plugin tools directly from non-agent code (e.g. the
@@ -79,6 +82,8 @@ pub struct Supervisor {
     soul_arc:          Option<Arc<RwLock<String>>>,
     /// Path to the events log directory so query_event_log can read JSONL files.
     events_dir:        Option<PathBuf>,
+    /// Vast.ai instance/tunnel state — shared with gateway for API routes.
+    vast_state:        Option<VastState>,
 }
 
 impl Supervisor {
@@ -98,6 +103,7 @@ impl Supervisor {
             schedule_tx:       None,
             council_tx:        None,
             events_dir:        None,
+            vast_state:        None,
         }
     }
 
@@ -128,6 +134,10 @@ impl Supervisor {
 
     pub fn set_events_dir(&mut self, dir: PathBuf) {
         self.events_dir = Some(dir);
+    }
+
+    pub fn set_vast_state(&mut self, state: VastState) {
+        self.vast_state = Some(state);
     }
 
     /// Boot all plugins from config then run the dispatch/supervision loop.
@@ -247,6 +257,9 @@ impl Supervisor {
                         }
                         SupervisorCmd::SetCouncilTx { tx } => {
                             self.council_tx = Some(tx);
+                        }
+                        SupervisorCmd::SetVastState { state } => {
+                            self.vast_state = Some(state);
                         }
                         SupervisorCmd::DirectCall { tool, args, reply } => {
                             if let Some(pid) = self.tool_registry.get(&tool).cloned() {
@@ -783,6 +796,524 @@ impl Supervisor {
             });
             return;
         }
+
+        // ── Vast.ai virtual tools ──────────────────────────────────────────────
+
+        // vast_list_recipes — read recipes.toml, return JSON array (no Vast API).
+        if call.tool == "vast_list_recipes" {
+            let call_id = call.id;
+            let bus     = self.bus.clone();
+            tokio::spawn(async move {
+                let result = load_recipes();
+                match result {
+                    Ok(rf) => {
+                        let summary: Vec<serde_json::Value> = rf.recipes.iter().map(|r| {
+                            let tier = rf.gpu_tiers.get(&r.gpu);
+                            serde_json::json!({
+                                "name":        r.name,
+                                "label":       r.label,
+                                "gpu":         r.gpu,
+                                "gpu_label":   tier.map(|t| t.label.as_str()).unwrap_or(&r.gpu),
+                                "model_repo":  r.model_repo,
+                                "model_quant": r.model_quant,
+                                "ctx":         r.ctx,
+                                "parallel":    r.parallel,
+                                "description": r.description,
+                            })
+                        }).collect();
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: true, content: serde_json::json!(summary) },
+                        }).await;
+                    }
+                    Err(e) => {
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!(e.to_string()) },
+                        }).await;
+                    }
+                }
+            });
+            return;
+        }
+
+        // vast_status — return current VastState as JSON.
+        if call.tool == "vast_status" {
+            let call_id    = call.id;
+            let bus        = self.bus.clone();
+            let vast_state = self.vast_state.clone();
+            tokio::spawn(async move {
+                let Some(vs) = vast_state else {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput { ok: true, content: serde_json::json!({ "status": "idle", "note": "vast not configured" }) },
+                    }).await;
+                    return;
+                };
+                let inst  = vs.instance.read().await.clone();
+                let phase = vs.phase.read().await.clone();
+                let status = match &phase {
+                    VastPhase::Idle       => "idle",
+                    VastPhase::Launching { .. } => "launching",
+                    VastPhase::Ready      => "ready",
+                    VastPhase::Destroying => "destroying",
+                };
+                let mut val = serde_json::json!({ "status": status });
+                if let VastPhase::Launching { phase: p } = &phase {
+                    val["phase"] = serde_json::json!(p);
+                }
+                if let Some(i) = inst {
+                    val["instance"] = serde_json::json!({
+                        "id":          i.id,
+                        "recipe":      i.recipe,
+                        "local_port":  i.local_port,
+                        "cost_per_hr": i.cost_per_hr,
+                        "launched_at": i.launched_at,
+                    });
+                }
+                bus.emit(Event::ToolResult {
+                    session, call: call_id,
+                    output: ToolOutput { ok: true, content: val },
+                }).await;
+            });
+            return;
+        }
+
+        // vast_launch — full async lifecycle: find offer → create → tunnel → health → hot-swap.
+        if call.tool == "vast_launch" {
+            let recipe_name = call.args["recipe"].as_str().unwrap_or("qwen36-27b-q6-5090").to_owned();
+            let geo         = call.args["geo"].as_str()
+                .map(str::to_owned)
+                .or_else(|| std::env::var("VAST_DEFAULT_GEO").ok())
+                .unwrap_or_else(|| "EU_NORDIC".into());
+            let call_id     = call.id;
+            let bus         = self.bus.clone();
+            let vast_state  = self.vast_state.clone();
+
+            let Some(vs) = vast_state else {
+                tokio::spawn(async move {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput { ok: false, content: serde_json::json!("vast not configured") },
+                    }).await;
+                });
+                return;
+            };
+
+            tokio::spawn(async move {
+                // Step 1: check for existing instance
+                if vs.instance.read().await.is_some() {
+                    let phase_str = match *vs.phase.read().await {
+                        VastPhase::Launching { ref phase } => format!("launching ({})", phase),
+                        VastPhase::Ready      => "ready".into(),
+                        VastPhase::Destroying => "destroying".into(),
+                        VastPhase::Idle       => "idle".into(),
+                    };
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput {
+                            ok: false,
+                            content: serde_json::json!(format!(
+                                "vast_launch: instance already exists (status: {}). Call vast_destroy first.",
+                                phase_str
+                            )),
+                        },
+                    }).await;
+                    return;
+                }
+
+                // Step 2: load recipe
+                let rf = match load_recipes() {
+                    Ok(r)  => r,
+                    Err(e) => {
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!(e.to_string()) },
+                        }).await;
+                        return;
+                    }
+                };
+                let recipe = match rf.recipes.iter().find(|r| r.name == recipe_name) {
+                    Some(r) => r.clone(),
+                    None => {
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput {
+                                ok: false,
+                                content: serde_json::json!(format!("recipe '{}' not found", recipe_name)),
+                            },
+                        }).await;
+                        return;
+                    }
+                };
+                let tier = match rf.gpu_tiers.get(&recipe.gpu) {
+                    Some(t) => t.clone(),
+                    None => {
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput {
+                                ok: false,
+                                content: serde_json::json!(format!("gpu tier '{}' not found", recipe.gpu)),
+                            },
+                        }).await;
+                        return;
+                    }
+                };
+                let docker_image = rf.docker.prebuilt.clone();
+                let local_port: u16 = std::env::var("VAST_LOCAL_PORT")
+                    .ok().and_then(|s| s.parse().ok()).unwrap_or(8000);
+
+                *vs.phase.write().await = VastPhase::Launching { phase: "searching for offer".into() };
+                eprintln!("[vast] launching recipe={} geo={}", recipe.name, geo);
+
+                // Step 3: search offers
+                let gpu_filter = tier.vast_names.iter()
+                    .map(|n| format!("gpu_name={}", n))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                let query = format!(
+                    "({gpu_filter}) reliability>0.99 inet_down>300 \
+                     dph_total<{} disk_space>{}",
+                    tier.max_price, tier.min_disk_gb
+                );
+                eprintln!("[vast] offer search: {query}");
+                let offers_out = match vastai(&["search", "offers", &query, "--order", "dph_total", "--raw"]).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        *vs.phase.write().await = VastPhase::Idle;
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!(format!("offer search failed: {e}")) },
+                        }).await;
+                        return;
+                    }
+                };
+
+                // Parse JSON array from offers — filter by geo, take cheapest
+                let offers: Vec<serde_json::Value> = serde_json::from_str(&offers_out)
+                    .unwrap_or_default();
+                let geo_re = match geo.as_str() {
+                    "EU_NORDIC" => vec!["SE", "NO", "FI", "DK", "IS"],
+                    "EU"        => vec!["SE", "NO", "FI", "DK", "IS", "DE", "NL", "FR", "GB", "PL"],
+                    "US"        => vec!["US"],
+                    _           => vec![],
+                };
+                let offer = offers.iter().find(|o| {
+                    if geo_re.is_empty() { return true; }
+                    let geo_str = o["geolocation"].as_str().unwrap_or("");
+                    geo_re.iter().any(|code| geo_str.contains(code))
+                }).or_else(|| offers.first());
+
+                let offer_id = match offer.and_then(|o| o["id"].as_u64()) {
+                    Some(id) => id.to_string(),
+                    None => {
+                        *vs.phase.write().await = VastPhase::Idle;
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!("no matching offers found") },
+                        }).await;
+                        return;
+                    }
+                };
+                let cost_per_hr = offer
+                    .and_then(|o| o["dph_total"].as_f64())
+                    .unwrap_or(0.0);
+                eprintln!("[vast] selected offer {offer_id} at ${cost_per_hr:.3}/hr");
+                *vs.phase.write().await = VastPhase::Launching { phase: "creating instance".into() };
+
+                // Step 4: create instance
+                let onstart = format!(
+                    "MODEL_REPO={} MODEL_QUANT={} CTX={} KV_TYPE={} MODE=thinking PARALLEL={} HOST=127.0.0.1 bash /app/launch.sh > /var/log/launch.log 2>&1 &",
+                    recipe.model_repo, recipe.model_quant, recipe.ctx, recipe.kv_type, recipe.parallel
+                );
+                let env_str = format!(
+                    "MODEL_REPO={} MODEL_QUANT={} CTX={} KV_TYPE=q8_0 MODE=thinking PARALLEL={} HOST=127.0.0.1",
+                    recipe.model_repo, recipe.model_quant, recipe.ctx, recipe.parallel
+                );
+                let create_out = match vastai(&[
+                    "create", "instance", &offer_id,
+                    "--image", &docker_image,
+                    "--disk",  &tier.min_disk_gb.to_string(),
+                    "--env",   &env_str,
+                    "--onstart-cmd", &onstart,
+                    "--raw",
+                ]).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        *vs.phase.write().await = VastPhase::Idle;
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!(format!("create failed: {e}")) },
+                        }).await;
+                        return;
+                    }
+                };
+                let create_json: serde_json::Value = serde_json::from_str(&create_out).unwrap_or_default();
+                let instance_id = match create_json["new_contract"].as_u64()
+                    .or_else(|| create_json["id"].as_u64())
+                {
+                    Some(id) => id.to_string(),
+                    None => {
+                        *vs.phase.write().await = VastPhase::Idle;
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!(format!("create returned unexpected JSON: {create_out}")) },
+                        }).await;
+                        return;
+                    }
+                };
+                eprintln!("[vast] instance created: {instance_id}");
+                bus.emit(Event::VastInstanceLaunched {
+                    instance_id: instance_id.clone(),
+                    recipe:      recipe.name.clone(),
+                    cost_per_hr,
+                }).await;
+                *vs.phase.write().await = VastPhase::Launching { phase: "waiting for SSH".into() };
+
+                // Step 5: poll until running + SSH available (5 min timeout)
+                let (ssh_host, ssh_port) = {
+                    let mut attempts = 0u32;
+                    let mut found = None;
+                    while attempts < 30 {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        attempts += 1;
+                        let show = match vastai(&["show", "instance", &instance_id, "--raw"]).await {
+                            Ok(o) => o,
+                            Err(_) => continue,
+                        };
+                        let info: serde_json::Value = serde_json::from_str(&show).unwrap_or_default();
+                        let arr = if info.is_array() { &info } else { &serde_json::json!([info]) };
+                        if let Some(inst_info) = arr.as_array().and_then(|a| a.first()) {
+                            let status = inst_info["actual_status"].as_str().unwrap_or("");
+                            let host   = inst_info["ssh_host"].as_str().unwrap_or("");
+                            let port   = inst_info["ssh_port"].as_u64().unwrap_or(0) as u16;
+                            if status == "running" && !host.is_empty() && port > 0 {
+                                found = Some((host.to_owned(), port));
+                                break;
+                            }
+                            eprintln!("[vast] waiting for SSH: status={status} attempt={attempts}/30");
+                        }
+                    }
+                    match found {
+                        Some(v) => v,
+                        None => {
+                            // cleanup orphaned instance
+                            let _ = vastai(&["destroy", "instance", &instance_id]).await;
+                            *vs.phase.write().await = VastPhase::Idle;
+                            bus.emit(Event::ToolResult {
+                                session, call: call_id,
+                                output: ToolOutput { ok: false, content: serde_json::json!("timed out waiting for instance to come up (5 min)") },
+                            }).await;
+                            return;
+                        }
+                    }
+                };
+                eprintln!("[vast] SSH ready: {ssh_host}:{ssh_port}");
+
+                // Step 6: write instance state + persist
+                let now = chrono::Utc::now().to_rfc3339();
+                let inst = VastInstance {
+                    id:          instance_id.clone(),
+                    recipe:      recipe.name.clone(),
+                    ssh_host:    ssh_host.clone(),
+                    ssh_port,
+                    local_port,
+                    cost_per_hr,
+                    launched_at: now,
+                };
+                *vs.instance.write().await = Some(inst.clone());
+                vs.persist_instance().await;
+                *vs.phase.write().await = VastPhase::Launching { phase: "opening tunnel".into() };
+
+                // Step 7: open SSH tunnel
+                let cm_path = format!("/tmp/apex-vast-cm-{instance_id}");
+                let mut ssh = tokio::process::Command::new("ssh");
+                ssh.args([
+                    "-f", "-N",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "ControlMaster=auto",
+                    "-o", &format!("ControlPath={cm_path}"),
+                    "-o", "ControlPersist=5m",
+                    "-o", "ServerAliveInterval=30",
+                    "-o", "ExitOnForwardFailure=yes",
+                    "-L", &format!("{local_port}:127.0.0.1:8000"),
+                    "-p", &ssh_port.to_string(),
+                    &format!("root@{ssh_host}"),
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+                let tunnel_child = match ssh.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = vastai(&["destroy", "instance", &instance_id]).await;
+                        vs.clear_instance().await;
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput { ok: false, content: serde_json::json!(format!("SSH tunnel spawn failed: {e}")) },
+                        }).await;
+                        return;
+                    }
+                };
+                {
+                    use crate::vast::TunnelHandle;
+                    *vs.tunnel.lock().await = Some(TunnelHandle { child: tunnel_child, local_port });
+                }
+                // Give SSH a moment to establish
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                *vs.phase.write().await = VastPhase::Launching { phase: "waiting for model load".into() };
+
+                // Step 8: poll health until model ready (20 min timeout)
+                let health_url = format!("http://127.0.0.1:{local_port}/health");
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(5))
+                    .build()
+                    .unwrap_or_default();
+                let mut ready = false;
+                for attempt in 0..80 {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    match client.get(&health_url).send().await {
+                        Ok(r) if r.status().is_success() => {
+                            ready = true;
+                            break;
+                        }
+                        _ => {
+                            if attempt % 4 == 0 {
+                                eprintln!("[vast] waiting for model (attempt {}/80)", attempt + 1);
+                            }
+                        }
+                    }
+                }
+                if !ready {
+                    let _ = vastai(&["destroy", "instance", &instance_id]).await;
+                    vs.clear_instance().await;
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput { ok: false, content: serde_json::json!("model failed to load in 20 minutes") },
+                    }).await;
+                    return;
+                }
+
+                // Step 9: ready — emit event for main.rs to hot-swap backend
+                *vs.phase.write().await = VastPhase::Ready;
+                eprintln!("[vast] model ready on port {local_port}");
+                bus.emit(Event::VastInstanceReady { instance_id: instance_id.clone(), local_port }).await;
+
+                // Spawn keepalive loop
+                let vs_ka  = vs.clone();
+                let bus_ka = bus.clone();
+                let id_ka  = instance_id.clone();
+                tokio::spawn(async move {
+                    let c = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(5))
+                        .build()
+                        .unwrap_or_default();
+                    let url = format!("http://127.0.0.1:{local_port}/health");
+                    let mut fails: u32 = 0;
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        let alive = vs_ka.instance.read().await.is_some();
+                        if !alive { break; }
+                        match c.get(&url).send().await {
+                            Ok(r) if r.status().is_success() => { fails = 0; }
+                            _ => {
+                                fails += 1;
+                                eprintln!("[vast] keepalive fail {fails}/3");
+                                if fails >= 3 {
+                                    eprintln!("[vast] tunnel lost after 3 failures");
+                                    bus_ka.emit(Event::VastTunnelLost { instance_id: id_ka.clone() }).await;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+
+                bus.emit(Event::ToolResult {
+                    session, call: call_id,
+                    output: ToolOutput {
+                        ok: true,
+                        content: serde_json::json!({
+                            "status":      "ready",
+                            "instance_id": instance_id,
+                            "recipe":      recipe.name,
+                            "model":       recipe.model_repo,
+                            "quant":       recipe.model_quant,
+                            "ctx":         recipe.ctx,
+                            "parallel":    recipe.parallel,
+                            "cost_per_hr": cost_per_hr,
+                            "local_port":  local_port,
+                            "message":     "Backend hot-swapped to Vast.ai instance. Agent will now use this model."
+                        }),
+                    },
+                }).await;
+            });
+            return;
+        }
+
+        // vast_destroy — tear down instance + tunnel + revert backend.
+        if call.tool == "vast_destroy" {
+            let call_id    = call.id;
+            let bus        = self.bus.clone();
+            let vast_state = self.vast_state.clone();
+
+            let Some(vs) = vast_state else {
+                tokio::spawn(async move {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput { ok: true, content: serde_json::json!("no vast state") },
+                    }).await;
+                });
+                return;
+            };
+
+            tokio::spawn(async move {
+                let inst = vs.instance.read().await.clone();
+                let Some(i) = inst else {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput { ok: true, content: serde_json::json!("no active instance") },
+                    }).await;
+                    return;
+                };
+                *vs.phase.write().await = VastPhase::Destroying;
+                let instance_id = i.id.clone();
+
+                // Kill tunnel
+                {
+                    let mut guard = vs.tunnel.lock().await;
+                    if let Some(mut t) = guard.take() {
+                        let _ = t.child.kill().await;
+                        let _ = tokio::fs::remove_file(
+                            format!("/tmp/apex-vast-cm-{instance_id}")
+                        ).await;
+                    }
+                }
+
+                // Destroy Vast instance
+                match vastai(&["destroy", "instance", &instance_id]).await {
+                    Ok(_)  => eprintln!("[vast] instance {instance_id} destroyed"),
+                    Err(e) => eprintln!("[vast] destroy error (continuing): {e}"),
+                }
+
+                vs.clear_instance().await;
+                bus.emit(Event::VastInstanceDestroyed { instance_id: instance_id.clone() }).await;
+
+                bus.emit(Event::ToolResult {
+                    session, call: call_id,
+                    output: ToolOutput {
+                        ok: true,
+                        content: serde_json::json!({
+                            "status":      "destroyed",
+                            "instance_id": instance_id,
+                            "message":     "Instance destroyed. Backend reverted to default."
+                        }),
+                    },
+                }).await;
+            });
+            return;
+        }
+
+        // ── end Vast.ai virtual tools ──────────────────────────────────────────
 
         // Virtual tool: agent_spawn is handled by the async router, not an MCP plugin.
         if call.tool == "agent_spawn" {

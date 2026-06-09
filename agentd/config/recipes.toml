@@ -1,0 +1,141 @@
+# ApexOS Inference Recipes
+# Curated GPU/model combos for Vast.ai. Edit or add via the desktop Inference panel.
+
+[docker]
+prebuilt = "ghcr.io/buckster123/vastai-gguf:prebuilt"
+
+# ── GPU Tiers ──────────────────────────────────────────────────────────────────
+[gpu_tiers.3090]
+vast_names  = ["RTX_3090"]
+label       = "RTX 3090  24GB  (~$0.18/hr)"
+max_price   = "0.30"
+min_disk_gb = 50
+vram_gb     = 24
+
+[gpu_tiers.4090]
+vast_names  = ["RTX_4090"]
+label       = "RTX 4090  24GB  (~$0.28/hr)"
+max_price   = "0.45"
+min_disk_gb = 60
+vram_gb     = 24
+
+[gpu_tiers.5090]
+vast_names  = ["RTX_5090"]
+label       = "RTX 5090  32GB  (~$0.34/hr)"
+max_price   = "0.55"
+min_disk_gb = 60
+vram_gb     = 32
+
+[gpu_tiers.h100-sxm]
+vast_names  = ["H100_SXM", "H100_SXM5", "H100X"]
+label       = "H100 SXM  80GB  (~$2.50/hr)"
+max_price   = "3.50"
+min_disk_gb = 100
+vram_gb     = 80
+
+[gpu_tiers.b200-sxm]
+vast_names  = ["B200_SXM", "B200"]
+label       = "B200 SXM  192GB  (~$5+/hr)"
+max_price   = "9.00"
+min_disk_gb = 200
+vram_gb     = 192
+
+# ── Recipes ────────────────────────────────────────────────────────────────────
+[[recipes]]
+name        = "qwen36-9b-q8-3090"
+label       = "Qwen3.6-9B  Q8  32K  (budget)"
+gpu         = "3090"
+model_repo  = "unsloth/Qwen3.6-9B-GGUF"
+model_quant = "Q8_0"
+ctx         = 32768
+parallel    = 1
+kv_type     = "q8_0"
+description = "9B at full quality. Fits with room. Fast cold start."
+
+[[recipes]]
+name        = "qwen36-27b-q4-4090"
+label       = "Qwen3.6-27B  Q4  64K  (4090)"
+gpu         = "4090"
+model_repo  = "unsloth/Qwen3.6-27B-GGUF"
+model_quant = "UD-Q4_K_XL"
+ctx         = 65536
+parallel    = 1
+kv_type     = "q8_0"
+description = "Dense 27B at Q4 on 24GB. Good value."
+
+[[recipes]]
+name        = "qwen36-27b-q6-5090"
+label       = "Qwen3.6-27B  Q6  96K  ★ default"
+gpu         = "5090"
+model_repo  = "unsloth/Qwen3.6-27B-GGUF"
+model_quant = "UD-Q6_K_XL"
+ctx         = 98304
+parallel    = 1
+kv_type     = "q8_0"
+description = "Dense 27B near-lossless. Best single-user throughput on 5090."
+
+[[recipes]]
+name        = "qwen36-35b-moe-q5-5090"
+label       = "Qwen3.6-35B-MoE  Q5  128K"
+gpu         = "5090"
+model_repo  = "unsloth/Qwen3.6-35B-A3B-GGUF"
+model_quant = "UD-Q5_K_XL"
+ctx         = 131072
+parallel    = 1
+kv_type     = "q8_0"
+description = "MoE 35B Q5. Hybrid-linear arch — only 10/40 layers full-KV. Great quality."
+
+[[recipes]]
+name        = "carnice-27b-q5-5090"
+label       = "Carnice-V2-27B  Q5  96K  🤖 hermes-tuned"
+gpu         = "5090"
+model_repo  = "kai-os/Carnice-V2-27b-GGUF"
+model_quant = "Q5_K_M"
+ctx         = 98304
+parallel    = 1
+kv_type     = "q8_0"
+description = "Carnice SFT on Hermes agent traces. A/B vs base Qwen."
+
+[[recipes]]
+name        = "carnice-moe-q4-3x256k-5090"
+label       = "Carnice MoE 35B-A3B  Q4  3×256K  🤖  (hero)"
+gpu         = "5090"
+model_repo  = "samuelcardillo/Carnice-Qwen3.6-MoE-35B-A3B-GGUF"
+model_quant = "Q4_K_M"
+ctx         = 786432
+parallel    = 3
+kv_type     = "q8_0"
+description = "3 parallel 256K slots on 32GB. Hermes orchestration at hero scale."
+
+[[recipes]]
+name        = "qwen36-35b-moe-q8-h100"
+label       = "Qwen3.6-35B-MoE  Q8  8×256K  (H100)"
+gpu         = "h100-sxm"
+model_repo  = "unsloth/Qwen3.6-35B-A3B-GGUF"
+model_quant = "UD-Q8_K_XL"
+ctx         = 2097152
+parallel    = 8
+kv_type     = "q8_0"
+description = "Near-lossless Q8, 8 slots × 256K. Hybrid KV = 2.7GB per slot. ~136 t/s confirmed."
+
+[[recipes]]
+name        = "carnice-moe-q8-h100"
+label       = "Carnice MoE 35B-A3B  Q8  8×256K  🤖  (H100)"
+gpu         = "h100-sxm"
+model_repo  = "samuelcardillo/Carnice-Qwen3.6-MoE-35B-A3B-GGUF"
+model_quant = "Q8_0"
+ctx         = 2097152
+parallel    = 8
+kv_type     = "q8_0"
+description = "Carnice hermes-tuned at H100 scale. A/B vs base for agentic evals."
+
+[[recipes]]
+name        = "qwen36-35b-moe-q8-10slot-b200"
+label       = "Qwen3.6-35B-MoE  Q8  10×256K  (B200)"
+gpu         = "b200-sxm"
+model_repo  = "unsloth/Qwen3.6-35B-A3B-GGUF"
+model_quant = "UD-Q8_K_XL"
+ctx         = 2621440
+parallel    = 10
+kv_type     = "q8_0"
+description = "10 parallel 256K slots on 192GB. Baller tier."

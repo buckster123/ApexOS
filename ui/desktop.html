@@ -108,6 +108,7 @@
       <button class="sm-item" onclick="launchApp('council')"><span class="sm-emoji">⚗</span>Council</button>
       <button class="sm-item" onclick="launchApp('eventlog')"><span class="sm-emoji">📜</span>Event Log</button>
       <button class="sm-item" onclick="launchApp('mesh')"><span class="sm-emoji">🕸</span>Mesh</button>
+      <button class="sm-item" onclick="launchApp('inference')"><span class="sm-emoji">⚡</span>Inference</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -294,6 +295,88 @@
       </div>
       <div id="mesh-bs-status" class="mesh-bs-status"></div>
     </div>
+  </div>
+
+  <!-- Inference (Vast.ai) window -->
+  <div id="win-inference-content" class="win-content inference-win" style="display:none">
+    <!-- Status bar -->
+    <div class="inf-toolbar">
+      <span class="inf-label">Backend:</span>
+      <span id="inf-status-badge" class="inf-badge inf-badge-idle">idle</span>
+      <button class="inf-btn" onclick="inferenceRefresh()">⟳ Refresh</button>
+      <button class="inf-btn" onclick="inferenceLoadRecipes()">↺ Recipes</button>
+    </div>
+
+    <!-- Active instance panel (hidden when idle) -->
+    <div id="inf-active-panel" class="inf-active-panel" style="display:none">
+      <div class="inf-active-header">ACTIVE INSTANCE</div>
+      <div class="inf-active-grid">
+        <span class="inf-key">ID</span>       <span id="inf-inst-id"       class="inf-val mono">—</span>
+        <span class="inf-key">Recipe</span>   <span id="inf-inst-recipe"   class="inf-val">—</span>
+        <span class="inf-key">Port</span>     <span id="inf-inst-port"     class="inf-val">—</span>
+        <span class="inf-key">Rate</span>     <span id="inf-inst-cost"     class="inf-val">—</span>
+        <span class="inf-key">Spent</span>    <span id="inf-inst-spent"    class="inf-val">—</span>
+        <span class="inf-key">Launched</span> <span id="inf-inst-launched" class="inf-val">—</span>
+      </div>
+      <button id="inf-destroy-btn" class="inf-destroy-btn" onclick="inferenceDestroy()">🗑 Destroy Instance</button>
+    </div>
+
+    <!-- Recipe list -->
+    <div class="inf-section-title">RECIPES</div>
+    <div id="inf-recipe-list" class="inf-recipe-list"></div>
+
+    <!-- Launch panel (hidden when instance active) -->
+    <div id="inf-launch-panel" class="inf-launch-panel">
+      <div class="inf-launch-row">
+        <label class="inf-label">Recipe:</label>
+        <input id="inf-launch-recipe" class="inf-input" placeholder="qwen36-27b-q6-5090">
+        <label class="inf-label">Geo:</label>
+        <select id="inf-launch-geo" class="inf-select">
+          <option value="EU_NORDIC">EU Nordic</option>
+          <option value="EU">EU</option>
+          <option value="US">US</option>
+          <option value="ANY">Any</option>
+        </select>
+        <button id="inf-launch-btn" class="inf-launch-btn" onclick="inferenceLaunch()">⚡ Launch</button>
+      </div>
+      <div id="inf-launch-status" class="inf-launch-status"></div>
+    </div>
+
+    <!-- Recipe builder (collapsible) -->
+    <details class="inf-builder">
+      <summary class="inf-builder-title">+ New Recipe / Live Offers</summary>
+      <div class="inf-builder-body">
+        <div class="inf-builder-row">
+          <label class="inf-label">GPU tier:</label>
+          <select id="inf-builder-gpu" class="inf-select">
+            <option value="3090">RTX 3090</option>
+            <option value="4090">RTX 4090</option>
+            <option value="5090" selected>RTX 5090</option>
+            <option value="h100-sxm">H100 SXM</option>
+            <option value="b200-sxm">B200 SXM</option>
+          </select>
+          <select id="inf-builder-geo" class="inf-select">
+            <option value="EU_NORDIC">EU Nordic</option>
+            <option value="EU">EU</option>
+            <option value="US">US</option>
+            <option value="ANY">Any</option>
+          </select>
+          <button class="inf-btn" onclick="inferenceLoadOffers()">Search Offers</button>
+        </div>
+        <div id="inf-offers-list" class="inf-offers-list">Select GPU tier and click Search Offers</div>
+        <div class="inf-builder-row">
+          <label class="inf-label">HF Model:</label>
+          <input id="inf-hf-search" class="inf-input" placeholder="e.g. qwen3.6 gguf">
+          <button class="inf-btn" onclick="inferenceHfSearch()">Search HF</button>
+        </div>
+        <div id="inf-hf-results" class="inf-hf-results"></div>
+        <div class="inf-builder-row">
+          <input id="inf-builder-model" class="inf-input inf-input-wide" placeholder="model_repo (e.g. unsloth/Qwen3.6-27B-GGUF)">
+          <input id="inf-builder-quant" class="inf-input" placeholder="quant (e.g. Q5_K_M)" style="width:120px">
+        </div>
+        <div class="inf-builder-hint">Click a HF result to fill model_repo. Then add recipe to recipes.toml manually or ask the agent.</div>
+      </div>
+    </details>
   </div>
 
   <!-- Sub-agent windows spawned dynamically by openSubAgentWin() -->

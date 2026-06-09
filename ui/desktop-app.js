@@ -163,6 +163,11 @@ const WIN_DEFAULTS = {
     x: 100, y: 70, width: 680, height: 480,
     background: 'var(--wb-bg)',
   },
+  inference: {
+    title: '⚡ Inference',
+    x: 120, y: 60, width: 720, height: 560,
+    background: 'var(--wb-bg)',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -243,6 +248,7 @@ function openWin(id) {
   if (id === 'home')      setTimeout(homeInit, 30);
   if (id === 'eventlog')  setTimeout(eventlogInit, 30);
   if (id === 'mesh')      setTimeout(meshInit, 30);
+  if (id === 'inference') setTimeout(inferenceInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -251,9 +257,10 @@ function openWin(id) {
     mount: content,
     onclose() {
       content.style.display = 'none';
-      if (id === 'home')     homeStop();
-      if (id === 'eventlog') eventlogStop();
-      if (id === 'mesh')     meshStop();
+      if (id === 'home')      homeStop();
+      if (id === 'eventlog')  eventlogStop();
+      if (id === 'mesh')      meshStop();
+      if (id === 'inference') inferenceStop();
       delete wins[id];
       removeTaskbarTab(id);
       return false;
@@ -2245,4 +2252,186 @@ async function meshBootstrapRun() {
   } else {
     if (status) status.textContent = 'Open the Agent window first, then try again.';
   }
+}
+
+// ─── Inference (Vast.ai) panel ────────────────────────────────────────────────
+
+let inferenceTimer     = null;
+let inferenceRecipes   = [];
+let inferenceSelected  = null;   // currently selected recipe name
+
+function inferenceInit() {
+  inferenceRefresh();
+  inferenceLoadRecipes();
+  inferenceTimer = setInterval(inferenceRefresh, 8000);
+}
+
+function inferenceStop() {
+  clearInterval(inferenceTimer);
+  inferenceTimer = null;
+}
+
+async function inferenceRefresh() {
+  const r = await fetch('/api/vast/status').catch(() => null);
+  if (!r || !r.ok) return;
+  const data = await r.json();
+
+  const statusBadge  = document.getElementById('inf-status-badge');
+  const activePanel  = document.getElementById('inf-active-panel');
+  const launchPanel  = document.getElementById('inf-launch-panel');
+
+  if (statusBadge) {
+    const s = data.status;
+    statusBadge.textContent = s;
+    statusBadge.className = 'inf-badge inf-badge-' + s;
+    if (s === 'launching' && data.launch_phase) {
+      statusBadge.textContent = 'launching: ' + data.launch_phase;
+    }
+  }
+
+  if (data.instance && activePanel) {
+    activePanel.style.display = '';
+    const i = data.instance;
+    document.getElementById('inf-instance-id')?.setAttribute('data-value', i.id);
+    const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+    el('inf-inst-id',      i.id);
+    el('inf-inst-recipe',  i.recipe);
+    el('inf-inst-port',    i.local_port);
+    el('inf-inst-cost',    '$' + (i.cost_per_hr || 0).toFixed(3) + '/hr');
+    el('inf-inst-launched', i.launched_at ? i.launched_at.slice(0,19).replace('T',' ') : '');
+    // Compute running cost
+    if (i.launched_at && i.cost_per_hr) {
+      const elapsed = (Date.now() - new Date(i.launched_at).getTime()) / 3600000;
+      el('inf-inst-spent', '$' + (elapsed * i.cost_per_hr).toFixed(3));
+    }
+  } else if (activePanel) {
+    activePanel.style.display = 'none';
+  }
+
+  if (launchPanel) {
+    launchPanel.style.display = data.status === 'idle' ? '' : 'none';
+  }
+}
+
+async function inferenceLoadRecipes() {
+  const r = await fetch('/api/vast/recipes').catch(() => null);
+  if (!r || !r.ok) return;
+  const data = await r.json();
+  inferenceRecipes = data.recipes || [];
+  inferenceRenderRecipes();
+}
+
+function inferenceRenderRecipes() {
+  const list = document.getElementById('inf-recipe-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  // Group by GPU tier
+  const byGpu = {};
+  inferenceRecipes.forEach(r => {
+    if (!byGpu[r.gpu]) byGpu[r.gpu] = [];
+    byGpu[r.gpu].push(r);
+  });
+
+  Object.entries(byGpu).forEach(([gpu, recipes]) => {
+    const header = document.createElement('div');
+    header.className = 'inf-gpu-header';
+    header.textContent = gpu.toUpperCase();
+    list.appendChild(header);
+
+    recipes.forEach(recipe => {
+      const row = document.createElement('div');
+      row.className = 'inf-recipe-row' + (inferenceSelected === recipe.name ? ' selected' : '');
+      row.innerHTML = `
+        <span class="inf-recipe-label">${recipe.label}</span>
+        <span class="inf-recipe-desc">${recipe.description}</span>
+        <button class="inf-btn" onclick="inferenceSelectRecipe('${recipe.name}')">Select</button>
+      `;
+      list.appendChild(row);
+    });
+  });
+}
+
+function inferenceSelectRecipe(name) {
+  inferenceSelected = name;
+  const sel = document.getElementById('inf-launch-recipe');
+  if (sel) sel.value = name;
+  inferenceRenderRecipes();
+}
+
+async function inferenceLaunch() {
+  const recipe = document.getElementById('inf-launch-recipe')?.value || inferenceSelected;
+  const geo    = document.getElementById('inf-launch-geo')?.value || 'EU_NORDIC';
+  if (!recipe) { alert('Select a recipe first'); return; }
+
+  const btn = document.getElementById('inf-launch-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Launching…'; }
+
+  const status = document.getElementById('inf-launch-status');
+  if (status) status.textContent = 'Sending launch request to agent…';
+
+  // Inject into agent input so user sees it
+  const msg = `vast_launch — recipe: ${recipe}, geo: ${geo}`;
+  const inputEl = document.getElementById('prompt-input');
+  if (inputEl) {
+    inputEl.value = `Please run vast_launch with recipe="${recipe}" and geo="${geo}"`;
+    if (status) status.textContent = '✓ Message ready in agent input — press Enter to send.';
+  } else {
+    if (status) status.textContent = 'Open Agent window first.';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '⚡ Launch'; }
+}
+
+async function inferenceDestroy() {
+  if (!confirm('Destroy the active Vast.ai instance? Billing stops immediately.')) return;
+  const btn = document.getElementById('inf-destroy-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Destroying…'; }
+  const inputEl = document.getElementById('prompt-input');
+  if (inputEl) {
+    inputEl.value = 'Please run vast_destroy to shut down the Vast.ai instance.';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '🗑 Destroy Instance'; }
+}
+
+async function inferenceLoadOffers() {
+  const gpu = document.getElementById('inf-builder-gpu')?.value || '';
+  const geo = document.getElementById('inf-builder-geo')?.value || 'EU_NORDIC';
+  const offerEl = document.getElementById('inf-offers-list');
+  if (offerEl) offerEl.textContent = 'Loading…';
+  const r = await fetch(`/api/vast/offers?gpu=${encodeURIComponent(gpu)}&geo=${encodeURIComponent(geo)}`).catch(() => null);
+  if (!r || !r.ok) { if (offerEl) offerEl.textContent = 'Error loading offers.'; return; }
+  const offers = await r.json();
+  if (!offerEl) return;
+  if (!offers.length) { offerEl.textContent = 'No offers found.'; return; }
+  offerEl.innerHTML = offers.slice(0,8).map(o =>
+    `<div class="inf-offer-row">
+      <span>${o.gpu_name}</span>
+      <span>$${(o.dph_total||0).toFixed(3)}/hr</span>
+      <span>${o.geolocation||''}</span>
+      <span>rel=${(o.reliability||0).toFixed(3)}</span>
+      <span>↓${Math.round(o.inet_down||0)} Mbps</span>
+    </div>`
+  ).join('');
+}
+
+async function inferenceHfSearch() {
+  const q    = document.getElementById('inf-hf-search')?.value || '';
+  const el   = document.getElementById('inf-hf-results');
+  if (!q) return;
+  if (el) el.textContent = 'Searching…';
+  const r = await fetch(`/api/vast/hf-search?q=${encodeURIComponent(q)}`).catch(() => null);
+  if (!r || !r.ok) { if (el) el.textContent = 'Error.'; return; }
+  const models = await r.json();
+  if (!el) return;
+  el.innerHTML = models.slice(0,10).map(m =>
+    `<div class="inf-hf-row" onclick="inferenceSetModel('${m.id}')">
+      <span class="inf-hf-id">${m.id}</span>
+      <span class="inf-hf-dl">↓${(m.downloads||0).toLocaleString()}</span>
+    </div>`
+  ).join('');
+}
+
+function inferenceSetModel(id) {
+  const el = document.getElementById('inf-builder-model');
+  if (el) el.value = id;
 }

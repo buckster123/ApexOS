@@ -185,6 +185,17 @@ pub enum Event {
 
     Error { session: Option<SessionId>, message: String },
 
+    // ── vast.ai inference ─────────────────────────────────
+    /// Emitted when a Vast instance is created (before model is loaded).
+    VastInstanceLaunched  { instance_id: String, recipe: String, cost_per_hr: f64 },
+    /// Emitted when the SSH tunnel is up and model health check passes.
+    /// main.rs catches this to hot-swap the OaiProvider backend.
+    VastInstanceReady     { instance_id: String, local_port: u16 },
+    /// Emitted after destroy completes; main.rs reverts backend.
+    VastInstanceDestroyed { instance_id: String },
+    /// Emitted by keepalive task after 3 consecutive health failures.
+    VastTunnelLost        { instance_id: String },
+
     // ── mesh ──────────────────────────────────────────────
     /// A new _apexos._tcp node seen via mDNS that isn't in peers.toml yet.
     PeerSeen       { node_id: String, ip: String },

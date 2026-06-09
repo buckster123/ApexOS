@@ -1,5 +1,6 @@
 use apexos_core::{ActionId, Bus, Event, SessionId, SystemState};
 use apexos_gateway::{router, GatewayState};
+use apexos_plugins::VastState;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +39,7 @@ fn make_state(handle: apexos_core::BusHandle, bcast: tokio::sync::broadcast::Sen
             apexos_gateway::PeerRegistry::load(std::path::Path::new("/dev/null"))
         )),
         node_id:              Arc::new("test-node".into()),
+        vast_state:           VastState::new(),
     }
 }
 

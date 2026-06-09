@@ -12,7 +12,7 @@ use apexos_core::{
 use apexos_gateway::{serve, GatewayState, PeerRegistry};
 use apexos_plugins::{
     load as load_plugins, PluginConfig, PolicyConfig, PolicyEngine, RestartPolicy,
-    Supervisor, SupervisorCmd, ToolProxy,
+    Supervisor, SupervisorCmd, ToolProxy, VastState,
 };
 use apexos_agent::{RoutingProvider, TurnEngine, run_turn};
 use apexos_store::run_log_writer;
@@ -185,6 +185,11 @@ async fn main() -> anyhow::Result<()> {
         let _ = std::fs::write(&peers_path, "# ApexOS mesh peers\n");
     }
     let peer_registry = Arc::new(RwLock::new(PeerRegistry::load(&peers_path)));
+    let vast_state = VastState::new();
+    {
+        let vs = vast_state.clone();
+        tokio::spawn(async move { vs.try_restore().await; });
+    }
     let node_id = Arc::new(
         std::env::var("APEX_NODE_ID").unwrap_or_else(|_| {
             std::process::Command::new("hostname")
@@ -222,6 +227,7 @@ async fn main() -> anyhow::Result<()> {
         council_next_id:      Arc::clone(&council_next_id),
         peer_registry:        Arc::clone(&peer_registry),
         node_id:              Arc::clone(&node_id),
+        vast_state:           vast_state.clone(),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {
@@ -255,6 +261,7 @@ async fn main() -> anyhow::Result<()> {
     let (rollback_tx, rollback_rx) = mpsc::channel::<(SessionId, ActionId, EvolutionId)>(16);
     supervisor.set_rollback_tx(rollback_tx);
     supervisor.set_events_dir(log_dir.clone());
+    supervisor.set_vast_state(vast_state.clone());
     tokio::spawn(supervisor.run(plugin_configs, bcast.subscribe()));
 
     // Agent turn engine — RoutingProvider dispatches per-call based on backend_arc
@@ -348,6 +355,41 @@ async fn main() -> anyhow::Result<()> {
     let agent_rx = bcast.subscribe();
     spawn_agent_router(agent_rx, bcast.clone(), handle.clone(),
                        tool_reg, histories, engine, max_depth, session_store);
+
+    // Vast.ai backend hot-swap — listens for VastInstanceReady / VastInstanceDestroyed
+    {
+        let mut vast_rx    = bcast.subscribe();
+        let backend_w      = Arc::clone(&backend_arc);
+        let oai_url_w      = Arc::clone(&oai_base_url_arc);
+        let model_w        = Arc::clone(&model_arc);
+        let default_backend = std::env::var("AGENTD_BACKEND").unwrap_or_else(|_| "anthropic".into());
+        let default_url     = std::env::var("AGENTD_OAI_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+        let default_model   = std::env::var("AGENTD_MODEL").unwrap_or_default();
+        tokio::spawn(async move {
+            loop {
+                match vast_rx.recv().await {
+                    Ok(Event::VastInstanceReady { instance_id, local_port }) => {
+                        eprintln!("[vast] hot-swapping backend → http://127.0.0.1:{local_port}/v1");
+                        *backend_w.write().await = "ollama".into();
+                        *oai_url_w.write().await = format!("http://127.0.0.1:{local_port}/v1");
+                        eprintln!("[vast] backend ready on instance {instance_id}");
+                    }
+                    Ok(Event::VastInstanceDestroyed { instance_id }) => {
+                        eprintln!("[vast] reverting backend after destroy (instance {instance_id})");
+                        *backend_w.write().await = default_backend.clone();
+                        *oai_url_w.write().await = default_url.clone();
+                        if !default_model.is_empty() {
+                            *model_w.write().await = default_model.clone();
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                    Ok(_)  => {}
+                }
+            }
+        });
+    }
 
     // Mesh discovery loop — mDNS poll, subnet guard, PeerSeen events
     spawn_discovery_loop(Arc::clone(&peer_registry), Arc::clone(&node_id), handle.clone());
@@ -1086,6 +1128,10 @@ async fn gather_tools(
     tools.push(query_event_log_spec());
     tools.push(list_mesh_peers_spec());
     tools.push(bootstrap_node_spec());
+    tools.push(vast_list_recipes_spec());
+    tools.push(vast_launch_spec());
+    tools.push(vast_destroy_spec());
+    tools.push(vast_status_spec());
     tools
 }
 
@@ -1414,6 +1460,58 @@ fn bootstrap_node_spec() -> ToolSpec {
             },
             "required": ["target_ip", "ssh_password"]
         }),
+    }
+}
+
+fn vast_list_recipes_spec() -> ToolSpec {
+    ToolSpec {
+        name:         "vast_list_recipes".into(),
+        description:  "List all available Vast.ai inference recipes (GPU tier, model, quant, ctx). \
+                       Call before vast_launch to pick a recipe name.".into(),
+        input_schema: serde_json::json!({ "type": "object", "properties": {}, "required": [] }),
+    }
+}
+
+fn vast_launch_spec() -> ToolSpec {
+    ToolSpec {
+        name:         "vast_launch".into(),
+        description:  "Rent a GPU on Vast.ai, spin up a llama-server container, open an SSH tunnel, \
+                       and hot-swap the inference backend. Returns when the model is loaded and ready \
+                       (can take 10-20 min for model download). Call vast_list_recipes first to pick \
+                       a recipe. Emits VastInstanceReady event when backend is live.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "recipe": {
+                    "type":        "string",
+                    "description": "Recipe name from vast_list_recipes (e.g. 'qwen36-27b-q6-5090')."
+                },
+                "geo": {
+                    "type":        "string",
+                    "description": "Geo preference: EU_NORDIC (default), EU, US, or ANY."
+                }
+            },
+            "required": ["recipe"]
+        }),
+    }
+}
+
+fn vast_destroy_spec() -> ToolSpec {
+    ToolSpec {
+        name:         "vast_destroy".into(),
+        description:  "Destroy the active Vast.ai instance, close the SSH tunnel, \
+                       and revert the inference backend to the default provider. \
+                       Billing stops immediately.".into(),
+        input_schema: serde_json::json!({ "type": "object", "properties": {}, "required": [] }),
+    }
+}
+
+fn vast_status_spec() -> ToolSpec {
+    ToolSpec {
+        name:         "vast_status".into(),
+        description:  "Return the current Vast.ai inference state: idle, launching (with phase), \
+                       ready (with instance details and cost), or destroying.".into(),
+        input_schema: serde_json::json!({ "type": "object", "properties": {}, "required": [] }),
     }
 }
 

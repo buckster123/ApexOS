@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use apexos_core::{ActionId, BusHandle, Event, Message as CoreMessage, SessionId};
-use apexos_plugins::{PolicyEngine, Rule};
+use apexos_plugins::{PolicyEngine, Rule, VastState, VastPhase, load_recipes};
 use tokio::sync::mpsc;
 
 /// Lightweight record of a council session, served by `GET /api/council[/:id]`.
@@ -75,6 +75,8 @@ pub struct GatewayState {
     pub peer_registry:     Arc<RwLock<PeerRegistry>>,
     /// Own node_id (hostname) — used by discovery loop to avoid self-bootstrap
     pub node_id:           Arc<String>,
+    /// Vast.ai instance + tunnel state — shared with supervisor for virtual tools
+    pub vast_state:        VastState,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -113,6 +115,10 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/mesh/nodes",         get(mesh_nodes_handler))
         .route("/api/mesh/peers",         get(mesh_peers_get_handler).post(mesh_peers_post_handler))
         .route("/api/mesh/peers/{id}",    delete(mesh_peers_delete_handler))
+        .route("/api/vast/recipes",       get(vast_recipes_handler).post(vast_recipes_save_handler))
+        .route("/api/vast/status",        get(vast_status_handler))
+        .route("/api/vast/offers",        get(vast_offers_handler))
+        .route("/api/vast/hf-search",     get(vast_hf_search_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -1478,6 +1484,202 @@ async fn mesh_peers_delete_handler(
         Ok(false) => Json(serde_json::json!({ "ok": false, "error": "peer not found" })),
         Err(e)    => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
     }
+}
+
+// ── Vast.ai API handlers ──────────────────────────────────────────────────────
+
+async fn vast_recipes_handler(
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    match load_recipes() {
+        Ok(rf) => {
+            let out = serde_json::json!({
+                "docker":    rf.docker,
+                "gpu_tiers": rf.gpu_tiers,
+                "recipes":   rf.recipes,
+            });
+            (StatusCode::OK, Json(out))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct RecipeSaveBody {
+    content: String,
+}
+
+async fn vast_recipes_save_handler(
+    State(_): State<GatewayState>,
+    Json(body): Json<RecipeSaveBody>,
+) -> impl IntoResponse {
+    let path = apexos_plugins::vast::recipes_path();
+    match tokio::fs::write(&path, &body.content).await {
+        Ok(_)  => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn vast_status_handler(
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    let vs    = &state.vast_state;
+    let inst  = vs.instance.read().await.clone();
+    let phase = vs.phase.read().await.clone();
+    let status = match &phase {
+        VastPhase::Idle            => "idle",
+        VastPhase::Launching { .. } => "launching",
+        VastPhase::Ready            => "ready",
+        VastPhase::Destroying       => "destroying",
+    };
+    let mut val = serde_json::json!({ "status": status });
+    if let VastPhase::Launching { phase: p } = &phase {
+        val["launch_phase"] = serde_json::json!(p);
+    }
+    if let Some(i) = inst {
+        val["instance"] = serde_json::to_value(&i).unwrap_or_default();
+    }
+    Json(val)
+}
+
+#[derive(Deserialize)]
+struct VastOffersQuery {
+    gpu: Option<String>,
+    geo: Option<String>,
+}
+
+async fn vast_offers_handler(
+    State(_state): State<GatewayState>,
+    Query(q): Query<VastOffersQuery>,
+) -> impl IntoResponse {
+    let api_key = match std::env::var("VAST_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "VAST_API_KEY not set" })),
+        ),
+    };
+
+    // Build GPU filter from tier or raw name
+    let gpu_filter = if let Some(gpu) = &q.gpu {
+        if let Ok(rf) = load_recipes() {
+            if let Some(tier) = rf.gpu_tiers.get(gpu.as_str()) {
+                tier.vast_names.iter().map(|n| format!("gpu_name={n}")).collect::<Vec<_>>().join(" | ")
+            } else {
+                format!("gpu_name={gpu}")
+            }
+        } else {
+            format!("gpu_name={gpu}")
+        }
+    } else {
+        "".into()
+    };
+
+    let query = if gpu_filter.is_empty() {
+        "reliability>0.99 inet_down>300 rentable=true".into()
+    } else {
+        format!("({gpu_filter}) reliability>0.99 inet_down>300 rentable=true")
+    };
+
+    let out = tokio::process::Command::new("vastai")
+        .args(["search", "offers", &query, "--order", "dph_total", "--raw"])
+        .env("VAST_API_KEY", &api_key)
+        .output()
+        .await;
+
+    match out {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let mut offers: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+
+            // Apply geo filter if requested
+            if let Some(geo) = &q.geo {
+                let codes: Vec<&str> = match geo.as_str() {
+                    "EU_NORDIC" => vec!["SE", "NO", "FI", "DK", "IS"],
+                    "EU"        => vec!["SE", "NO", "FI", "DK", "IS", "DE", "NL", "FR", "GB", "PL"],
+                    "US"        => vec!["US"],
+                    _           => vec![],
+                };
+                if !codes.is_empty() {
+                    offers.retain(|o| {
+                        let loc = o["geolocation"].as_str().unwrap_or("");
+                        codes.iter().any(|c| loc.contains(c))
+                    });
+                }
+            }
+
+            // Return slim fields
+            let slim: Vec<serde_json::Value> = offers.iter().map(|o| serde_json::json!({
+                "id":           o["id"],
+                "gpu_name":     o["gpu_name"],
+                "dph_total":    o["dph_total"],
+                "vram_mb":      o["gpu_ram"],
+                "geolocation":  o["geolocation"],
+                "reliability":  o["reliability2"],
+                "inet_down":    o["inet_down"],
+            })).collect();
+
+            (StatusCode::OK, Json(serde_json::json!(slim)))
+        }
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": err.trim() })))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("vastai not found: {e}") })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct HfSearchQuery {
+    q: String,
+}
+
+async fn vast_hf_search_handler(
+    State(_state): State<GatewayState>,
+    Query(q): Query<HfSearchQuery>,
+) -> impl IntoResponse {
+    // Proxy HuggingFace API for GGUF model search
+    let url = format!(
+        "https://huggingface.co/api/models?search={}&filter=gguf&sort=downloads&limit=20",
+        urlencoding(&q.q)
+    );
+    let out = tokio::process::Command::new("curl")
+        .args(["-s", "--max-time", "10", &url])
+        .output()
+        .await;
+    match out {
+        Ok(o) if o.status.success() => {
+            let text  = String::from_utf8_lossy(&o.stdout);
+            let models: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+            let slim: Vec<serde_json::Value> = models.iter().take(20).map(|m| serde_json::json!({
+                "id":        m["id"],
+                "downloads": m["downloads"],
+                "likes":     m["likes"],
+            })).collect();
+            (StatusCode::OK, Json(serde_json::json!(slim)))
+        }
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "HF search failed" })),
+        ),
+    }
+}
+
+fn urlencoding(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+        ' ' => "+".into(),
+        c   => format!("%{:02X}", c as u32),
+    }).collect()
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

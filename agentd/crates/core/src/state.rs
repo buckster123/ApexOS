@@ -107,6 +107,12 @@ impl SystemState {
             Event::PeerSeen       { .. } => {}
             Event::PeerRegistered { .. } => {}
             Event::PeerLost       { .. } => {}
+
+            // Vast.ai: backend hot-swap handled by main.rs; state is a no-op.
+            Event::VastInstanceLaunched  { .. } => {}
+            Event::VastInstanceReady     { .. } => {}
+            Event::VastInstanceDestroyed { .. } => {}
+            Event::VastTunnelLost        { .. } => {}
         }
     }
 
