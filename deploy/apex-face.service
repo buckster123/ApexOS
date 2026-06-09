@@ -12,6 +12,9 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+# Creates /run/apex-face/ owned by apexos on start
+RuntimeDirectory=apex-face
+RuntimeDirectoryMode=0755
 # SPI + GPIO access
 SupplementaryGroups=gpio spi
 

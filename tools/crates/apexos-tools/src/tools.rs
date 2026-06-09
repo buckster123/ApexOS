@@ -1635,7 +1635,7 @@ fn display_face(args: &Value) -> Value {
         return tool_error(format!("invalid state '{}' — use: {}", state, valid.join(", ")));
     }
     let text = args["text"].as_str().unwrap_or("");
-    let sock_path = "/tmp/apex-face.sock";
+    let sock_path = "/run/apex-face/face.sock";
     if !std::path::Path::new(sock_path).exists() {
         return tool_ok(json!({ "ok": false, "reason": "display daemon not running (apex-face.service)" }));
     }

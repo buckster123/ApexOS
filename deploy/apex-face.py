@@ -50,7 +50,7 @@ SPI_BUS = 0
 SPI_DEV = 0   # CE0
 SPI_HZ  = 80_000_000
 
-SOCK_PATH = "/tmp/apex-face.sock"
+SOCK_PATH = "/run/apex-face/face.sock"
 WIDTH  = 240
 HEIGHT = 240
 
