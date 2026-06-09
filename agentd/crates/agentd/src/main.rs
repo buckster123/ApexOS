@@ -818,6 +818,16 @@ fn spawn_agent_router(
     let next_child_id    = Arc::new(AtomicU64::new(1u64 << 63));
 
     tokio::spawn(async move {
+        // Per-alert-key cooldown to prevent turn storms when a condition persists.
+        let mut last_alert: HashMap<String, std::time::Instant> = HashMap::new();
+        let iaq_threshold: f32 = std::env::var("SENSOR_IAQ_THRESHOLD")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(150.0);
+        let cpu_temp_threshold: f32 = std::env::var("SENSOR_CPU_TEMP_THRESHOLD")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(85.0);
+        let thermal_threshold: f32 = std::env::var("SENSOR_THERMAL_THRESHOLD")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(45.0);
+        let alert_cooldown_secs: u64 = std::env::var("SENSOR_ALERT_COOLDOWN_SECS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(1800);
         loop {
             match rx.recv().await {
                 // ── new root turn ────────────────────────────────────────────
@@ -918,29 +928,48 @@ fn spawn_agent_router(
 
                 // ── sensor events ────────────────────────────────────────────
                 Ok(Event::SensorReading { node_id, reading, timestamp: _ }) => {
-                    // Threshold check: fire a turn if a critical condition is seen.
-                    let alert: Option<String> = match &reading {
-                        SensorReading::Temperature { celsius, sensor_id } if *celsius > 85.0 => {
-                            Some(format!(
-                                "[sensor alert] {node_id}/{sensor_id} CPU temperature critical: {celsius:.1}°C — please investigate"
+                    // (alert_key, prompt) — key is used for per-type cooldown dedup.
+                    let alert: Option<(String, String)> = match &reading {
+                        SensorReading::Temperature { celsius, sensor_id }
+                            if *celsius > cpu_temp_threshold => {
+                            Some((
+                                format!("{node_id}:cpu_temp"),
+                                format!("[sensor alert] {node_id}/{sensor_id} CPU temperature critical: {celsius:.1}°C (threshold {cpu_temp_threshold:.0}°C) — please investigate"),
                             ))
                         }
                         SensorReading::Motion { detected: true, sensor_id } => {
-                            Some(format!(
-                                "[sensor alert] {node_id}/{sensor_id} motion detected"
+                            Some((
+                                format!("{node_id}:motion"),
+                                format!("[sensor alert] {node_id}/{sensor_id} motion detected"),
                             ))
                         }
-                        SensorReading::AirQuality { iaq, accuracy, sensor_id, .. } if *iaq > 150.0 && *accuracy >= 2 => {
-                            Some(format!(
-                                "[sensor alert] {node_id}/{sensor_id} air quality degraded: IAQ {iaq:.0} (accuracy {accuracy}/3) — consider ventilating"
+                        SensorReading::AirQuality { iaq, accuracy, sensor_id, .. }
+                            if *iaq > iaq_threshold && *accuracy >= 2 => {
+                            Some((
+                                format!("{node_id}:air_quality"),
+                                format!("[sensor alert] {node_id}/{sensor_id} air quality degraded: IAQ {iaq:.0} (threshold {iaq_threshold:.0}, accuracy {accuracy}/3) — consider ventilating"),
+                            ))
+                        }
+                        SensorReading::ThermalFrame { max_c, mean_c, sensor_id, .. }
+                            if *max_c > thermal_threshold => {
+                            Some((
+                                format!("{node_id}:thermal_hotspot"),
+                                format!("[sensor alert] {node_id}/{sensor_id} thermal hotspot: {max_c:.1}°C max, {mean_c:.1}°C mean (threshold {thermal_threshold:.0}°C) — check for overheating devices"),
                             ))
                         }
                         _ => None,
                     };
-                    if let Some(prompt) = alert {
-                        let root = SessionId(0);
-                        session_depths.lock().await.entry(root).or_insert(0);
-                        bus.emit(Event::UserPrompt { session: root, text: prompt }).await;
+                    if let Some((alert_key, prompt)) = alert {
+                        let now = std::time::Instant::now();
+                        let cooled_down = last_alert.get(&alert_key)
+                            .map(|t| now.duration_since(*t).as_secs() >= alert_cooldown_secs)
+                            .unwrap_or(true);
+                        if cooled_down {
+                            last_alert.insert(alert_key, now);
+                            let root = SessionId(0);
+                            session_depths.lock().await.entry(root).or_insert(0);
+                            bus.emit(Event::UserPrompt { session: root, text: prompt }).await;
+                        }
                     }
                 }
 

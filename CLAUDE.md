@@ -60,6 +60,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~29.~~ ✓ Council persistence + Cerebro hook — broadcast-subscriber JSONL writer task per council session → `$AGENTD_LOG/council/<id>.jsonl` (start/round_start/agent_done/round_done/complete events); post-synthesis `memory_store` to Cerebro via `ToolProxy` (tagged `council`+`apexos`); best-effort, never fails the council
 ~~30.~~ ✓ A2A messaging — `send_to_agent` virtual tool; `AgentMessage`+`AgentMessageAck` in core; agent router injects as `UserPrompt` on target session; `POST /api/sessions/{id}/message` gateway route; sub-agent window inbox display (`subagent-inbox-msg`); fire-and-forget, no blocking
 ~~31.~~ ✓ RAG over event log — `query_event_log` virtual tool (hours/types/max params); reads date-rolling JSONL files from events_dir, skips streaming noise, formats each event as a readable sentence; `GET /api/events/recent?hours=24&types=...` gateway route for external consumers; agents can now answer "what happened today?" or batch-store events to Cerebro for semantic search
+~~32.~~ ✓ Sensor anomaly wakeup — per-type cooldown (default 30 min, `SENSOR_ALERT_COOLDOWN_SECS`); configurable thresholds (`SENSOR_IAQ_THRESHOLD`, `SENSOR_CPU_TEMP_THRESHOLD`, `SENSOR_THERMAL_THRESHOLD`); `ThermalFrame` hotspot detection added; agent router fires `UserPrompt` on threshold crossing, suppressed until cooldown expires; no-spam guaranteed
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)

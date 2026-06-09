@@ -143,7 +143,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 
 ## Build roadmap
 
-31 steps, all complete:
+32 steps, all complete:
 
 | # | Feature |
 |---|---------|
@@ -178,6 +178,7 @@ Detects your hardware (mic, camera, sensors), asks a few questions, starts the s
 | 29 | Council persistence + Cerebro hook — per-session JSONL log; post-synthesis memory store |
 | 30 | A2A messaging — `send_to_agent` peer tool; `GET /api/sessions/active`; inbox display in sub-agent windows |
 | 31 | RAG over event log — `query_event_log` virtual tool; `GET /api/events/recent`; agents can query and digest system history |
+| 32 | Sensor anomaly wakeup — per-type cooldown (30 min default); configurable thresholds; `ThermalFrame` hotspot detection; no-spam guaranteed |
 
 ---
 
