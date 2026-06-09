@@ -216,6 +216,83 @@ pub fn list() -> Value {
                 },
                 "required": ["path"]
             }
+        },
+        {
+            "name": "gpio_info",
+            "description": "Report GPIO hardware info: Pi model, chip path (gpiochip4 on Pi 5, gpiochip0 on Pi 3/4), sysfs base, reserved pins, and availability of gpioget/gpioset tools.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "gpio_read",
+            "description": "Read a GPIO pin state (0=low, 1=high). Pi GPIO is 3.3V logic. Uses gpioget from libgpiod. Refuses reserved pins (I2C: 2,3; HAT EEPROM: 27,28).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "gpio": { "type": "integer", "description": "BCM GPIO number (0-27)" }
+                },
+                "required": ["gpio"]
+            }
+        },
+        {
+            "name": "gpio_write",
+            "description": "Set a GPIO pin high (1) or low (0). SAFETY: Pi GPIO is 3.3V, max 16mA per pin, 50mA total. Never connect 5V signals. Use resistors for LEDs (330Ω min). Refuses reserved pins.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "gpio":  { "type": "integer", "description": "BCM GPIO number (0-27)" },
+                    "value": { "type": "integer", "description": "0 (low) or 1 (high)" }
+                },
+                "required": ["gpio", "value"]
+            }
+        },
+        {
+            "name": "gpio_pulse",
+            "description": "Pulse a GPIO pin high for a specified duration then return low. Useful for buzzers, relay triggers, LED blinks. SAFETY: same 3.3V/16mA limits as gpio_write.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "gpio":        { "type": "integer", "description": "BCM GPIO number" },
+                    "duration_ms": { "type": "integer", "description": "Pulse duration in milliseconds (default 100)" }
+                },
+                "required": ["gpio"]
+            }
+        },
+        {
+            "name": "gpio_pwm",
+            "description": "Set hardware PWM on a PWM-capable GPIO (12, 13, 18, or 19). Requires dtoverlay=pwm-2chan in /boot/firmware/config.txt. Uses sysfs /sys/class/pwm/.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "gpio":      { "type": "integer", "description": "BCM GPIO number — must be 12, 13, 18, or 19" },
+                    "duty_pct":  { "type": "number",  "description": "Duty cycle 0.0–100.0 percent" },
+                    "freq_hz":   { "type": "number",  "description": "PWM frequency in Hz (default 1000)" }
+                },
+                "required": ["gpio", "duty_pct"]
+            }
+        },
+        {
+            "name": "gpio_servo",
+            "description": "Set a servo position by angle. Outputs 50Hz PWM with 1ms–2ms pulse width for 0°–180°. GPIO must be PWM-capable (12, 13, 18, 19). Servo signal is 3.3V-compatible but servo POWER must come from an external 5V supply, not Pi GPIO pins.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "gpio":      { "type": "integer", "description": "BCM GPIO number (12, 13, 18, or 19)" },
+                    "angle_deg": { "type": "number",  "description": "Servo angle 0–180 degrees" }
+                },
+                "required": ["gpio", "angle_deg"]
+            }
+        },
+        {
+            "name": "display_face",
+            "description": "Set the expression on the GC9A01A round TFT display face. States: idle, thinking, speaking, alert, listening, sleeping, happy. Requires apex-face service running.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "state": { "type": "string", "description": "Face state: idle|thinking|speaking|alert|listening|sleeping|happy" },
+                    "text":  { "type": "string", "description": "Optional text to show below the face (max ~20 chars)" }
+                },
+                "required": ["state"]
+            }
         }
     ])
 }
@@ -242,6 +319,13 @@ pub fn call(name: &str, args: &Value) -> Value {
         "audio_peak_limit" => audio_peak_limit(args),
         "audio_trim" => audio_trim(args),
         "audio_clean" => audio_clean(args),
+        "gpio_info" => gpio_info(),
+        "gpio_read" => gpio_read(args),
+        "gpio_write" => gpio_write(args),
+        "gpio_pulse" => gpio_pulse(args),
+        "gpio_pwm" => gpio_pwm(args),
+        "gpio_servo" => gpio_servo(args),
+        "display_face" => display_face(args),
         _ => tool_error(format!("unknown tool: {}", name)),
     }
 }
@@ -1289,4 +1373,282 @@ fn audio_clean(args: &Value) -> Value {
         "stats_before": stats_before,
         "stats_after":  stats_after,
     }))
+}
+
+// ─── GPIO ─────────────────────────────────────────────────────────────────────
+
+// Pins reserved by default — I2C bus 1 (sensor head) + HAT EEPROM
+const GPIO_RESERVED: &[(u32, &str)] = &[
+    (0,  "I2C ID EEPROM (HAT standard)"),
+    (1,  "I2C ID EEPROM (HAT standard)"),
+    (2,  "I2C1 SDA — sensor head (BME688/MLX90640)"),
+    (3,  "I2C1 SCL — sensor head (BME688/MLX90640)"),
+    (27, "HAT ID EEPROM SD"),
+    (28, "HAT ID EEPROM SC"),
+];
+
+fn gpio_reserved_check(gpio: u32) -> Option<&'static str> {
+    // Allow override via APEX_GPIO_RESERVED=none env var
+    if std::env::var("APEX_GPIO_RESERVED").as_deref() == Ok("none") {
+        return None;
+    }
+    GPIO_RESERVED.iter().find(|(n, _)| *n == gpio).map(|(_, reason)| *reason)
+}
+
+fn gpio_detect_model() -> String {
+    std::fs::read_to_string("/proc/device-tree/model")
+        .unwrap_or_default()
+        .trim_matches('\0')
+        .trim()
+        .to_string()
+}
+
+fn gpio_chip_path() -> String {
+    if gpio_detect_model().contains("Raspberry Pi 5") {
+        "/dev/gpiochip4".to_string()
+    } else {
+        "/dev/gpiochip0".to_string()
+    }
+}
+
+// Returns the sysfs GPIO base number for the main 40-pin header chip.
+// Pi 5: gpiochip4 → base 512. Pi 3/4: gpiochip0 → base 0.
+fn gpio_sysfs_base() -> u32 {
+    let chip = gpio_chip_path();
+    let name = chip.trim_start_matches("/dev/");
+    std::fs::read_to_string(format!("/sys/class/gpio/{}/base", name))
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+// Export a GPIO via sysfs and return its path, or an error string.
+fn gpio_sysfs_export(gpio: u32) -> Result<String, String> {
+    let sysfs_n = gpio_sysfs_base() + gpio;
+    let path = format!("/sys/class/gpio/gpio{}", sysfs_n);
+    if !std::path::Path::new(&path).exists() {
+        std::fs::write("/sys/class/gpio/export", sysfs_n.to_string())
+            .map_err(|e| format!("export GPIO {}: {}", gpio, e))?;
+        // Small settle delay after export
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(path)
+}
+
+fn gpio_info() -> Value {
+    let model = gpio_detect_model();
+    let chip  = gpio_chip_path();
+    let base  = gpio_sysfs_base();
+    let gpioget_ok = std::process::Command::new("gpioget").arg("--version")
+        .output().map(|o| o.status.success()).unwrap_or(false);
+    let reserved: Vec<_> = GPIO_RESERVED.iter()
+        .map(|(n, r)| json!({ "gpio": n, "reason": r }))
+        .collect();
+    tool_ok(json!({
+        "model":           model,
+        "chip":            chip,
+        "sysfs_base":      base,
+        "gpioget_available": gpioget_ok,
+        "reserved_pins":   reserved,
+        "note": "Set APEX_GPIO_RESERVED=none to bypass reserved-pin checks (unsafe with sensor head)"
+    }))
+}
+
+fn gpio_read(args: &Value) -> Value {
+    let gpio = match args["gpio"].as_u64() {
+        Some(n) => n as u32,
+        None => return tool_error("gpio required"),
+    };
+    if let Some(reason) = gpio_reserved_check(gpio) {
+        return tool_error(format!("GPIO {} is reserved: {}", gpio, reason));
+    }
+    let chip = gpio_chip_path();
+    let offset = gpio.to_string();
+    let (stdout, stderr, ok) = cmd_capture("gpioget", &[&chip, &offset]);
+    if !ok {
+        return tool_error(format!("gpioget failed: {}", stderr.trim()));
+    }
+    let value: u8 = stdout.trim().parse().unwrap_or(0);
+    tool_ok(json!({ "gpio": gpio, "value": value }))
+}
+
+fn gpio_write(args: &Value) -> Value {
+    let gpio = match args["gpio"].as_u64() {
+        Some(n) => n as u32,
+        None => return tool_error("gpio required"),
+    };
+    let value = match args["value"].as_u64() {
+        Some(n) if n <= 1 => n as u8,
+        Some(_) => return tool_error("value must be 0 or 1"),
+        None => return tool_error("value required"),
+    };
+    if let Some(reason) = gpio_reserved_check(gpio) {
+        return tool_error(format!("GPIO {} is reserved: {}", gpio, reason));
+    }
+    let path = match gpio_sysfs_export(gpio) {
+        Ok(p) => p,
+        Err(e) => return tool_error(e),
+    };
+    if let Err(e) = std::fs::write(format!("{}/direction", path), "out") {
+        return tool_error(format!("set direction: {}", e));
+    }
+    if let Err(e) = std::fs::write(format!("{}/value", path), value.to_string()) {
+        return tool_error(format!("write value: {}", e));
+    }
+    tool_ok(json!({ "gpio": gpio, "value": value, "ok": true }))
+}
+
+fn gpio_pulse(args: &Value) -> Value {
+    let gpio = match args["gpio"].as_u64() {
+        Some(n) => n as u32,
+        None => return tool_error("gpio required"),
+    };
+    let duration_ms = args["duration_ms"].as_u64().unwrap_or(100);
+    if let Some(reason) = gpio_reserved_check(gpio) {
+        return tool_error(format!("GPIO {} is reserved: {}", gpio, reason));
+    }
+    let path = match gpio_sysfs_export(gpio) {
+        Ok(p) => p,
+        Err(e) => return tool_error(e),
+    };
+    let dir_path = format!("{}/direction", path);
+    let val_path = format!("{}/value", path);
+    if let Err(e) = std::fs::write(&dir_path, "out") {
+        return tool_error(format!("set direction: {}", e));
+    }
+    let _ = std::fs::write(&val_path, "1");
+    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+    let _ = std::fs::write(&val_path, "0");
+    tool_ok(json!({ "gpio": gpio, "duration_ms": duration_ms, "ok": true }))
+}
+
+// Find the sysfs pwmchipN path and channel for a given BCM GPIO.
+// Pi 5 (RP1): GPIO 12→ch0, 13→ch1, 18→ch2, 19→ch3 under the RP1 PWM chip.
+// Pi 4 (BCM2711): GPIO 12→ch0, 13→ch1, 18→ch0, 19→ch1 under pwmchip0.
+// Returns (chip_path, channel) or an error string.
+fn pwm_chip_for_gpio(gpio: u32) -> Result<(String, u32), String> {
+    let pi5 = gpio_detect_model().contains("Raspberry Pi 5");
+    let channel = match (pi5, gpio) {
+        (true,  12) => 0,
+        (true,  13) => 1,
+        (true,  18) => 2,
+        (true,  19) => 3,
+        (false, 12) | (false, 18) => 0,
+        (false, 13) | (false, 19) => 1,
+        _ => return Err(format!("GPIO {} does not support hardware PWM (use 12, 13, 18, or 19)", gpio)),
+    };
+    // Scan /sys/class/pwm/ for a chip that has enough channels
+    let pwm_dir = std::path::Path::new("/sys/class/pwm");
+    if !pwm_dir.exists() {
+        return Err("PWM sysfs not available — add dtoverlay=pwm-2chan to /boot/firmware/config.txt and reboot".to_string());
+    }
+    let entries: Vec<_> = std::fs::read_dir(pwm_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("pwmchip"))
+        .collect();
+    if entries.is_empty() {
+        return Err("no PWM chips found — add dtoverlay=pwm-2chan to /boot/firmware/config.txt and reboot".to_string());
+    }
+    // On Pi 5, the RP1 PWM chip has 4 channels; on Pi 4 it has 2.
+    // Pick the chip with enough channels.
+    let needed = channel + 1;
+    for entry in &entries {
+        let chip_path = entry.path().to_string_lossy().to_string();
+        let npwm_path = format!("{}/npwm", chip_path);
+        if let Ok(n) = std::fs::read_to_string(&npwm_path).map(|s| s.trim().parse::<u32>().unwrap_or(0)) {
+            if n >= needed {
+                return Ok((chip_path, channel));
+            }
+        }
+    }
+    // Fallback: use the first chip
+    let chip_path = entries[0].path().to_string_lossy().to_string();
+    Ok((chip_path, channel))
+}
+
+fn pwm_set(gpio: u32, freq_hz: f64, duty_pct: f64) -> Result<(), String> {
+    let (chip_path, channel) = pwm_chip_for_gpio(gpio)?;
+    let export_path = format!("{}/export", chip_path);
+    let pwm_path    = format!("{}/pwm{}", chip_path, channel);
+
+    // Export channel if not already exported
+    if !std::path::Path::new(&pwm_path).exists() {
+        std::fs::write(&export_path, channel.to_string())
+            .map_err(|e| format!("PWM export: {}", e))?;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Disable before changing period (kernel requirement)
+    let _ = std::fs::write(format!("{}/enable", pwm_path), "0");
+
+    let period_ns = (1_000_000_000.0 / freq_hz) as u64;
+    let duty_ns   = ((duty_pct / 100.0) * period_ns as f64) as u64;
+
+    std::fs::write(format!("{}/period", pwm_path), period_ns.to_string())
+        .map_err(|e| format!("set period: {}", e))?;
+    std::fs::write(format!("{}/duty_cycle", pwm_path), duty_ns.to_string())
+        .map_err(|e| format!("set duty_cycle: {}", e))?;
+    std::fs::write(format!("{}/enable", pwm_path), "1")
+        .map_err(|e| format!("enable PWM: {}", e))?;
+    Ok(())
+}
+
+fn gpio_pwm(args: &Value) -> Value {
+    let gpio = match args["gpio"].as_u64() {
+        Some(n) => n as u32,
+        None => return tool_error("gpio required"),
+    };
+    let duty_pct = args["duty_pct"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0);
+    let freq_hz  = args["freq_hz"].as_f64().unwrap_or(1000.0);
+    if let Some(reason) = gpio_reserved_check(gpio) {
+        return tool_error(format!("GPIO {} is reserved: {}", gpio, reason));
+    }
+    match pwm_set(gpio, freq_hz, duty_pct) {
+        Ok(()) => tool_ok(json!({ "gpio": gpio, "freq_hz": freq_hz, "duty_pct": duty_pct, "ok": true })),
+        Err(e) => tool_error(e),
+    }
+}
+
+fn gpio_servo(args: &Value) -> Value {
+    let gpio = match args["gpio"].as_u64() {
+        Some(n) => n as u32,
+        None => return tool_error("gpio required"),
+    };
+    let angle = args["angle_deg"].as_f64().unwrap_or(90.0).clamp(0.0, 180.0);
+    if let Some(reason) = gpio_reserved_check(gpio) {
+        return tool_error(format!("GPIO {} is reserved: {}", gpio, reason));
+    }
+    // Standard servo: 50Hz, 1ms (5% duty) = 0°, 1.5ms (7.5%) = 90°, 2ms (10%) = 180°
+    let freq_hz  = 50.0_f64;
+    let duty_pct = 5.0 + (angle / 180.0) * 5.0; // 5%–10% at 50Hz
+    match pwm_set(gpio, freq_hz, duty_pct) {
+        Ok(()) => tool_ok(json!({ "gpio": gpio, "angle_deg": angle, "duty_pct": duty_pct, "freq_hz": freq_hz, "ok": true })),
+        Err(e) => tool_error(e),
+    }
+}
+
+fn display_face(args: &Value) -> Value {
+    let state = args["state"].as_str().unwrap_or("idle");
+    let valid = ["idle","thinking","speaking","alert","listening","sleeping","happy"];
+    if !valid.contains(&state) {
+        return tool_error(format!("invalid state '{}' — use: {}", state, valid.join(", ")));
+    }
+    let text = args["text"].as_str().unwrap_or("");
+    let sock_path = "/tmp/apex-face.sock";
+    if !std::path::Path::new(sock_path).exists() {
+        return tool_ok(json!({ "ok": false, "reason": "display daemon not running (apex-face.service)" }));
+    }
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    match UnixStream::connect(sock_path) {
+        Ok(mut stream) => {
+            let msg = format!("{}\n", serde_json::json!({ "state": state, "text": text }));
+            match stream.write_all(msg.as_bytes()) {
+                Ok(_)  => tool_ok(json!({ "ok": true, "state": state })),
+                Err(e) => tool_error(format!("display write: {}", e)),
+            }
+        }
+        Err(e) => tool_error(format!("display connect: {}", e)),
+    }
 }

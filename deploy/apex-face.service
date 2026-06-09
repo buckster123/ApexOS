@@ -1,0 +1,19 @@
+[Unit]
+Description=ApexOS GC9A01A face display daemon
+After=network.target
+Wants=agentd.service
+
+[Service]
+Type=simple
+User=apexos
+Group=apexos
+ExecStart=/usr/bin/python3 /home/apexos/ApexOS/deploy/apex-face.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# SPI + GPIO access
+SupplementaryGroups=gpio spi
+
+[Install]
+WantedBy=multi-user.target
