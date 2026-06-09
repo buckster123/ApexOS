@@ -60,54 +60,68 @@ pub async fn run_turn(
     // Maps our ActionId back to the Anthropic string id for tool_result blocks.
     let mut id_map: HashMap<ActionId, String> = HashMap::new();
 
+    // Upper bound on how long we wait for a tool's result before giving up and
+    // synthesizing an error. Generous by default so genuinely long tools (e.g.
+    // vast_launch can take ~20 min) aren't aborted, but finite so an abandoned
+    // approval or a dropped result can never wedge the turn forever (which would
+    // also leak the semaphore permit). Override via AGENTD_TOOL_RESULT_TIMEOUT_SECS.
+    let tool_timeout = std::time::Duration::from_secs(
+        std::env::var("AGENTD_TOOL_RESULT_TIMEOUT_SECS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(1800),
+    );
+
     loop {
-        // Bound concurrent API calls — released when _permit drops at end of loop body.
-        let _permit = engine.sem.acquire().await?;
-
-        let system_str = engine.system.read().await.clone();
-        let system_opt = if system_str.is_empty() { None } else { Some(system_str.as_str()) };
-        let mut stream = engine.provider
-            .messages_stream(&history, &tools, system_opt)
-            .await?;
-
         let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
         let mut pending_tools:    Vec<ToolCall>     = Vec::new();
 
-        while let Some(chunk) = stream.next().await {
-            match chunk? {
-                Chunk::TextDelta(t) => {
-                    bus.emit(Event::AgentText { session, delta: t }).await;
+        // Hold the concurrency permit ONLY across the provider API call/stream —
+        // not across tool execution or approval waits. A turn parked waiting for
+        // a human to approve a tool must not consume an API-concurrency slot.
+        {
+            let _permit = engine.sem.acquire().await?;
+
+            let system_str = engine.system.read().await.clone();
+            let system_opt = if system_str.is_empty() { None } else { Some(system_str.as_str()) };
+            let mut stream = engine.provider
+                .messages_stream(&history, &tools, system_opt)
+                .await?;
+
+            while let Some(chunk) = stream.next().await {
+                match chunk? {
+                    Chunk::TextDelta(t) => {
+                        bus.emit(Event::AgentText { session, delta: t }).await;
+                    }
+                    Chunk::ThinkingDelta(t) => {
+                        bus.emit(Event::AgentThinking { session, delta: t }).await;
+                    }
+                    Chunk::TextBlock(text) => {
+                        assistant_blocks.push(ContentBlock::Text { text });
+                    }
+                    // CRITICAL: thinking blocks MUST be retained with their signature
+                    // or the API rejects the next turn in a tool-use loop.
+                    Chunk::ThinkingBlock { thinking, signature } => {
+                        assistant_blocks.push(ContentBlock::Thinking { thinking, signature });
+                    }
+                    Chunk::ToolUse { id: api_id, name, input } => {
+                        let action_id = ActionId(next_id);
+                        next_id += 1;
+                        id_map.insert(action_id, api_id.clone());
+                        assistant_blocks.push(ContentBlock::ToolUse {
+                            id:    api_id,
+                            name:  name.clone(),
+                            input: input.clone(),
+                        });
+                        pending_tools.push(ToolCall {
+                            id:              action_id,
+                            tool:            name,
+                            args:            input,
+                            needs_approval:  false,
+                        });
+                    }
+                    Chunk::Done => break,
                 }
-                Chunk::ThinkingDelta(t) => {
-                    bus.emit(Event::AgentThinking { session, delta: t }).await;
-                }
-                Chunk::TextBlock(text) => {
-                    assistant_blocks.push(ContentBlock::Text { text });
-                }
-                // CRITICAL: thinking blocks MUST be retained with their signature
-                // or the API rejects the next turn in a tool-use loop.
-                Chunk::ThinkingBlock { thinking, signature } => {
-                    assistant_blocks.push(ContentBlock::Thinking { thinking, signature });
-                }
-                Chunk::ToolUse { id: api_id, name, input } => {
-                    let action_id = ActionId(next_id);
-                    next_id += 1;
-                    id_map.insert(action_id, api_id.clone());
-                    assistant_blocks.push(ContentBlock::ToolUse {
-                        id:    api_id,
-                        name:  name.clone(),
-                        input: input.clone(),
-                    });
-                    pending_tools.push(ToolCall {
-                        id:              action_id,
-                        tool:            name,
-                        args:            input,
-                        needs_approval:  false,
-                    });
-                }
-                Chunk::Done => break,
             }
-        }
+        } // permit dropped here — tool execution + approval wait run unthrottled
 
         // Commit full assistant turn — text + thinking + tool_use all together.
         history.push(Message::Assistant { content: assistant_blocks });
@@ -124,9 +138,9 @@ pub async fn run_turn(
             bus.emit(Event::ToolRequested { session, call: call.clone() }).await;
         }
 
-        let tool_results = collect_tool_results(&mut rx, session, &pending_tools, &id_map).await?;
+        let tool_results =
+            collect_tool_results(&mut rx, session, &pending_tools, &id_map, tool_timeout).await?;
         history.push(Message::User { content: tool_results });
-        // _permit drops here — reacquired at top of loop for next round-trip.
     }
 }
 
@@ -135,28 +149,47 @@ async fn collect_tool_results(
     session: SessionId,
     pending: &[ToolCall],
     id_map:  &HashMap<ActionId, String>,
+    timeout: std::time::Duration,
 ) -> anyhow::Result<Vec<ContentBlock>> {
     let mut remaining: HashMap<ActionId, ()> = pending.iter().map(|c| (c.id, ())).collect();
     let mut results:   HashMap<ActionId, ToolOutput> = HashMap::new();
 
-    while !remaining.is_empty() {
-        match rx.recv().await {
-            Ok(Event::ToolResult { session: s, call: action_id, output }) if s == session => {
-                if remaining.remove(&action_id).is_some() {
-                    results.insert(action_id, output);
+    // Bound the whole collection. On expiry we fall through and synthesize error
+    // results for whatever is still missing, so the turn always unwinds and the
+    // semaphore permit is never leaked — even if a tool never emits a result
+    // (abandoned approval) or its result was dropped by a lagged broadcast rx.
+    let collect = async {
+        while !remaining.is_empty() {
+            match rx.recv().await {
+                Ok(Event::ToolResult { session: s, call: action_id, output }) if s == session => {
+                    if remaining.remove(&action_id).is_some() {
+                        results.insert(action_id, output);
+                    }
                 }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => return Err(anyhow::anyhow!("bus closed while awaiting tool results")),
             }
-            Ok(_) => {}
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(_) => return Err(anyhow::anyhow!("bus closed while awaiting tool results")),
         }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    match tokio::time::timeout(timeout, collect).await {
+        Ok(Ok(()))  => {}
+        Ok(Err(e))  => return Err(e),   // bus closed
+        Err(_)      => eprintln!(
+            "[agent:{session:?}] tool result(s) timed out after {}s — synthesizing errors for {} call(s)",
+            timeout.as_secs(), remaining.len(),
+        ),
     }
 
     let mut out = Vec::with_capacity(pending.len());
     for call in pending {
         let output = results.remove(&call.id).unwrap_or(ToolOutput {
             ok:      false,
-            content: serde_json::json!("missing result"),
+            content: serde_json::json!(format!(
+                "no result for tool '{}' (timed out or dropped)", call.tool
+            )),
         });
         let api_id = id_map.get(&call.id).cloned().unwrap_or_default();
         out.push(ContentBlock::ToolResult {
@@ -319,5 +352,40 @@ mod tests {
 
         // history: user → assistant(tool_use) → user(tool_result) → assistant(text)
         assert_eq!(updated.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn tool_timeout_synthesizes_error_and_unwinds() {
+        // No tool executor is listening, so the result never arrives. With a short
+        // timeout the turn must still complete (error result synthesized), proving
+        // an abandoned/never-answered tool can't wedge the turn forever.
+        std::env::set_var("AGENTD_TOOL_RESULT_TIMEOUT_SECS", "1");
+        let (bus, handle, bcast) = Bus::new(SystemState::default());
+        tokio::spawn(bus.run());
+
+        let provider = MockProvider::with_responses(vec![
+            vec![
+                Chunk::ToolUse { id: "tid1".into(), name: "stuck.tool".into(), input: serde_json::json!({}) },
+                Chunk::Done,
+            ],
+            vec![ Chunk::TextBlock("recovered".into()), Chunk::Done ],
+        ]);
+
+        let engine = Arc::new(TurnEngine::new(provider, 1, None));
+        let history = vec![Message::User { content: vec![ContentBlock::Text { text: "go".into() }] }];
+
+        let updated = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run_turn(SessionId(1), history, handle, bcast, vec![], engine),
+        ).await.expect("run_turn must not hang").unwrap();
+
+        std::env::remove_var("AGENTD_TOOL_RESULT_TIMEOUT_SECS");
+        // user → assistant(tool_use) → user(synthesized error result) → assistant(text)
+        assert_eq!(updated.len(), 4);
+        match &updated[2] {
+            Message::User { content } => assert!(content.iter().any(|b|
+                matches!(b, ContentBlock::ToolResult { is_error, .. } if *is_error))),
+            _ => panic!("expected synthesized tool_result"),
+        }
     }
 }

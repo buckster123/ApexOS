@@ -79,6 +79,18 @@ Load order: `AGENTD_SOUL` env → `/etc/agentd/soul.md` → `config/soul.md` (de
 ## Reference
 - `docs/reference/core_loops.rs` — Loop 2 (agent turn engine shape)
 
+## Concurrency permit + tool-result timeout
+- The semaphore permit is held ONLY across the provider API call/stream, then
+  dropped before tool execution + approval wait. A turn parked on a human
+  approval must not consume an API-concurrency slot.
+- `collect_tool_results` is bounded by `AGENTD_TOOL_RESULT_TIMEOUT_SECS`
+  (default 1800s — generous so long tools like `vast_launch` ~20 min aren't
+  aborted, finite so an abandoned approval or a dropped broadcast result can't
+  wedge the turn forever / leak the permit). On expiry it synthesizes
+  `is_error` tool_result blocks for the missing calls so the turn always unwinds.
+- Tool results travel on the lossy broadcast bus; the timeout is also the guard
+  against a `Lagged` receiver missing its own `ToolResult`.
+
 ## Notes
 - `reqwest::Client` is cheaply cloneable (Arc-backed); safe to keep one in `AnthropicProvider`
 - SSE buffer: processes complete lines from byte chunks; handles chunk boundaries in mid-line
