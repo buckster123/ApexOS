@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 apex-face.py — GC9A01A round TFT face daemon for ApexOS
-Listens on /tmp/apex-face.sock for JSON commands from display_face MCP tool.
+Listens on /run/apex-face/face.sock for JSON commands from display_face MCP tool.
 Renders face states as animated PIL frames to the 240x240 SPI display.
 
 Wiring (SYS-SPI GC9A01A 11-pin module):
@@ -29,14 +29,13 @@ import json
 import time
 import math
 import socket
-import struct
 import threading
 import signal
 
 try:
     import lgpio
     import spidev
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 except ImportError as e:
     print(f"Missing dependency: {e}")
     print("Run: pip install lgpio spidev pillow")
@@ -138,17 +137,22 @@ class GC9A01A:
             self.spi.xfer2(list(data))
 
     def reset(self):
-        lgpio.gpio_write(self.h, RST_PIN, 1); time.sleep(0.01)
-        lgpio.gpio_write(self.h, RST_PIN, 0); time.sleep(0.01)
-        lgpio.gpio_write(self.h, RST_PIN, 1); time.sleep(0.15)
+        lgpio.gpio_write(self.h, RST_PIN, 1)
+        time.sleep(0.01)
+        lgpio.gpio_write(self.h, RST_PIN, 0)
+        time.sleep(0.01)
+        lgpio.gpio_write(self.h, RST_PIN, 1)
+        time.sleep(0.15)
 
     def init(self):
         self.reset()
         for cmd, data in GC9A01A_INIT:
             self._cmd(cmd, data or None)
-        self._cmd(0x11); time.sleep(0.15)   # Sleep out
-        self._cmd(0x29); time.sleep(0.15)   # Display on
-        lgpio.gpio_write(self.h, BL_PIN, 1) # Backlight on
+        self._cmd(0x11)                       # Sleep out
+        time.sleep(0.15)
+        self._cmd(0x29)                       # Display on
+        time.sleep(0.15)
+        lgpio.gpio_write(self.h, BL_PIN, 1)   # Backlight on
 
     def show(self, img: Image.Image):
         img = img.convert('RGB').resize((WIDTH, HEIGHT))
