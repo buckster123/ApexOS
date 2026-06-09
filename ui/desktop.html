@@ -109,6 +109,7 @@
       <button class="sm-item" onclick="launchApp('eventlog')"><span class="sm-emoji">📜</span>Event Log</button>
       <button class="sm-item" onclick="launchApp('mesh')"><span class="sm-emoji">🕸</span>Mesh</button>
       <button class="sm-item" onclick="launchApp('inference')"><span class="sm-emoji">⚡</span>Inference</button>
+      <button class="sm-item" onclick="launchApp('audio')"><span class="sm-emoji">🎛️</span>Audio Editor</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -234,6 +235,74 @@
         <span class="player-vol-label">🔊</span>
         <input type="range" id="player-vol" class="player-vol" min="0" max="1" value="0.8" step="0.05">
         <button class="player-btn player-refresh-btn" onclick="playerRefresh()" title="Refresh">↺</button>
+        <button class="player-btn player-edit-btn" onclick="playerEditCurrent()" title="Edit in Audio Editor">🎛️</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Editor window -->
+  <div id="win-audio-content" class="win-content audio-win" style="display:none">
+    <div class="audio-toolbar">
+      <select id="audio-file-select" class="audio-select" onchange="audioLoadFile(this.value)">
+        <option value="">— select file —</option>
+      </select>
+      <button class="audio-btn" onclick="audioRefreshFiles()">↺</button>
+      <button class="audio-btn audio-export-btn" onclick="audioExport()" id="audio-export-btn" disabled>💾 Export</button>
+    </div>
+
+    <div class="audio-waveform-container" id="audio-waveform-container">
+      <canvas id="audio-waveform" class="audio-waveform-canvas"></canvas>
+      <div class="audio-playhead" id="audio-playhead"></div>
+      <div class="audio-trim-in"  id="audio-trim-in"  title="Drag to set in point"></div>
+      <div class="audio-trim-out" id="audio-trim-out" title="Drag to set out point"></div>
+    </div>
+
+    <div class="audio-transport">
+      <button class="audio-transport-btn" onclick="audioPlayPause()" id="audio-play-btn">▶</button>
+      <button class="audio-transport-btn" onclick="audioStop()">⏹</button>
+      <span id="audio-time" class="audio-time">0:00 / 0:00</span>
+      <audio id="audio-el" preload="metadata"></audio>
+    </div>
+
+    <div class="audio-panels">
+      <div class="audio-autofix-panel">
+        <div class="audio-panel-title">AUTO-FIX</div>
+        <div id="audio-analysis" class="audio-analysis-empty">No file loaded</div>
+        <button class="audio-fix-btn audio-fix-all" onclick="audioAutoFix()" id="audio-fix-all-btn" disabled>🪄 Auto-fix All</button>
+        <button class="audio-fix-btn" onclick="audioApplyOp('trim_silence')" id="audio-fix-silence-btn" disabled>✂ Trim Silence</button>
+        <button class="audio-fix-btn" onclick="audioApplyOp('normalize')"   id="audio-fix-norm-btn"    disabled>📊 Normalize -14</button>
+        <button class="audio-fix-btn" onclick="audioApplyOp('peak_limit')"  id="audio-fix-peak-btn"    disabled>🔊 Peak Limit</button>
+      </div>
+      <div class="audio-manual-panel">
+        <div class="audio-panel-title">MANUAL</div>
+        <div class="audio-manual-row">
+          <label>In:</label>
+          <input type="number" id="audio-trim-in-val"  class="audio-num-input" value="0" step="0.1" min="0">
+          <button class="audio-btn-sm" onclick="audioSetTrimFromPlayhead('in')">⬅ Playhead</button>
+        </div>
+        <div class="audio-manual-row">
+          <label>Out:</label>
+          <input type="number" id="audio-trim-out-val" class="audio-num-input" value="0" step="0.1" min="0">
+          <button class="audio-btn-sm" onclick="audioSetTrimFromPlayhead('out')">⬅ Playhead</button>
+        </div>
+        <div class="audio-manual-row">
+          <label>Gain:</label>
+          <input type="range" id="audio-gain-slider" class="audio-slider" min="-12" max="12" value="0" step="0.5" oninput="audioGainUpdate(this.value)">
+          <span id="audio-gain-val" class="audio-gain-val">0.0 dB</span>
+        </div>
+        <div class="audio-manual-row">
+          <label>Fade in:</label>
+          <input type="number" id="audio-fade-in-val"  class="audio-num-input" value="0" step="0.1" min="0">
+          <label>s</label>
+        </div>
+        <div class="audio-manual-row">
+          <label>Fade out:</label>
+          <input type="number" id="audio-fade-out-val" class="audio-num-input" value="0" step="0.1" min="0">
+          <label>s</label>
+        </div>
+        <div class="audio-manual-actions">
+          <button class="audio-btn audio-apply-btn" onclick="audioApplyManual()" id="audio-apply-btn" disabled>Apply</button>
+        </div>
       </div>
     </div>
   </div>

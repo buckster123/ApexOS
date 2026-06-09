@@ -119,6 +119,10 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/vast/status",        get(vast_status_handler))
         .route("/api/vast/offers",        get(vast_offers_handler))
         .route("/api/vast/hf-search",     get(vast_hf_search_handler))
+        .route("/api/audio/files",        get(audio_files_handler))
+        .route("/api/audio/analyze",      post(audio_analyze_handler))
+        .route("/api/audio/waveform",     post(audio_waveform_handler))
+        .route("/api/audio/process",      post(audio_process_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -1680,6 +1684,358 @@ fn urlencoding(s: &str) -> String {
         ' ' => "+".into(),
         c   => format!("%{:02X}", c as u32),
     }).collect()
+}
+
+// ── Audio API handlers ────────────────────────────────────────────────────────
+
+/// GET /api/audio/files — list audio files in workspace dirs.
+async fn audio_files_handler() -> impl IntoResponse {
+    let search_dirs = vec![
+        "/var/lib/agentd/workspace/sonus",
+        "/var/lib/agentd/workspace",
+    ];
+    let exts = ["mp3", "wav", "flac", "ogg", "m4a", "aac"];
+    let mut files: Vec<serde_json::Value> = Vec::new();
+
+    for dir in &search_dirs {
+        let mut rd = match tokio::fs::read_dir(dir).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let p = entry.path();
+            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !exts.contains(&ext) { continue; }
+            let meta = entry.metadata().await.ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            files.push(serde_json::json!({
+                "path": p.to_string_lossy(),
+                "name": p.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                "size": size,
+            }));
+        }
+    }
+
+    files.sort_by(|a, b| {
+        let an = a["name"].as_str().unwrap_or("");
+        let bn = b["name"].as_str().unwrap_or("");
+        an.cmp(bn)
+    });
+
+    Json(serde_json::json!({ "files": files }))
+}
+
+#[derive(Deserialize)]
+struct AudioPathBody {
+    path: String,
+}
+
+/// POST /api/audio/analyze — run ffprobe + ffmpeg loudnorm analysis.
+async fn audio_analyze_handler(
+    Json(body): Json<AudioPathBody>,
+) -> impl IntoResponse {
+    let path = body.path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        audio_analyze_inner_gw(&path)
+    }).await;
+
+    match result {
+        Ok(Ok(stats)) => (StatusCode::OK, Json(stats)).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+/// POST /api/audio/waveform — extract amplitude envelope for canvas rendering.
+/// Body: { path, samples? } — returns { samples: [f32], duration_s: f64 }
+#[derive(Deserialize)]
+struct WaveformBody {
+    path: String,
+    samples: Option<usize>,
+}
+
+async fn audio_waveform_handler(
+    Json(body): Json<WaveformBody>,
+) -> impl IntoResponse {
+    let path = body.path.clone();
+    let n = body.samples.unwrap_or(1200).min(4096);
+
+    let result = tokio::task::spawn_blocking(move || {
+        // Get duration first via ffprobe
+        let probe = std::process::Command::new("ffprobe")
+            .args(["-v", "quiet", "-print_format", "json", "-show_format", &path])
+            .output()
+            .map_err(|e| e.to_string())?;
+        let info: serde_json::Value = serde_json::from_slice(&probe.stdout)
+            .unwrap_or_default();
+        let duration_s: f64 = info["format"]["duration"].as_str()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
+
+        // Sample at 4000 Hz mono → compute max-envelope bins
+        let out = std::process::Command::new("ffmpeg")
+            .args(["-i", &path, "-ac", "1", "-ar", "4000", "-f", "f32le", "pipe:1"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        let bytes = out.stdout;
+        let total_samples = bytes.len() / 4;
+        if total_samples == 0 {
+            return Err("no PCM output from ffmpeg".to_string());
+        }
+
+        let raw: Vec<f32> = bytes.chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+
+        // Max-envelope into n bins
+        let bin_size = (total_samples / n).max(1);
+        let envelope: Vec<f32> = (0..n)
+            .map(|i| {
+                let start = i * bin_size;
+                let end = ((i + 1) * bin_size).min(raw.len());
+                if start >= raw.len() { return 0.0f32; }
+                raw[start..end].iter().map(|s| s.abs()).fold(0.0f32, f32::max)
+            })
+            .collect();
+
+        Ok((envelope, duration_s))
+    }).await;
+
+    match result {
+        Ok(Ok((samples, duration_s))) => (StatusCode::OK, Json(serde_json::json!({
+            "samples": samples,
+            "duration_s": duration_s,
+        }))).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+/// POST /api/audio/process — apply an op chain to an audio file.
+/// Body: { path, ops: [{type, ...params}], output_path? }
+#[derive(Deserialize)]
+struct ProcessBody {
+    path: String,
+    ops: Vec<serde_json::Value>,
+    output_path: Option<String>,
+}
+
+async fn audio_process_handler(
+    Json(body): Json<ProcessBody>,
+) -> impl IntoResponse {
+    let path = body.path.clone();
+    let ops = body.ops.clone();
+
+    // Default output path: <stem>_edit.<ext>
+    let output_path = match body.output_path.clone() {
+        Some(p) => p,
+        None => {
+            let p = std::path::Path::new(&path);
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("track");
+            let ext  = p.extension().and_then(|s| s.to_str()).unwrap_or("mp3");
+            let dir  = p.parent().and_then(|d| d.to_str()).unwrap_or(".");
+            format!("{dir}/{stem}_edit.{ext}")
+        }
+    };
+
+    let out = output_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        apply_audio_ops(&path, &ops, &output_path)
+    }).await;
+
+    match result {
+        Ok(Ok(())) => (StatusCode::OK, Json(serde_json::json!({ "output_path": out }))).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+/// Build and run an ffmpeg command from an op list.
+fn apply_audio_ops(path: &str, ops: &[serde_json::Value], out: &str) -> Result<(), String> {
+    let mut af_filters: Vec<String> = Vec::new();
+    let mut start_s: Option<f64> = None;
+    let mut end_s: Option<f64>   = None;
+
+    for op in ops {
+        match op["type"].as_str().unwrap_or("") {
+            "trim" => {
+                start_s = op["start_s"].as_f64();
+                end_s   = op["end_s"].as_f64();
+            }
+            "normalize" => {
+                let target = op["target_lufs"].as_f64().unwrap_or(-14.0);
+                let tp     = op["true_peak"].as_f64().unwrap_or(-2.0);
+                af_filters.push(format!("loudnorm=I={target}:TP={tp}:LRA=11"));
+            }
+            "peak_limit" => {
+                let limit_db = op["limit_db"].as_f64().unwrap_or(-1.0);
+                let linear   = 10f64.powf(limit_db / 20.0);
+                af_filters.push(format!("alimiter=limit={linear:.4}:level_in=1:level_out=1:attack=5:release=50:asc=1"));
+            }
+            "trim_silence" => {
+                let thresh = op["threshold_db"].as_f64().unwrap_or(-50.0);
+                af_filters.push(format!(
+                    "silenceremove=stop_periods=-1:stop_threshold={thresh}dB:stop_duration=0.5"
+                ));
+            }
+            "fade_in" => {
+                let d = op["duration_s"].as_f64().unwrap_or(1.0);
+                af_filters.push(format!("afade=t=in:st=0:d={d}"));
+            }
+            "fade_out" => {
+                let d = op["duration_s"].as_f64().unwrap_or(2.0);
+                // Compute start from trim end or use 0 as placeholder (ffmpeg will clamp)
+                let start = end_s.unwrap_or(0.0) - d;
+                let start = start.max(0.0);
+                af_filters.push(format!("afade=t=out:st={start:.3}:d={d}"));
+            }
+            "gain" => {
+                let gain_db = op["gain_db"].as_f64().unwrap_or(0.0);
+                if gain_db != 0.0 {
+                    let linear = 10f64.powf(gain_db / 20.0);
+                    af_filters.push(format!("volume={linear:.4}"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Build ffmpeg args
+    let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.to_string()];
+    if let Some(s) = start_s { args.extend(["-ss".into(), format!("{s:.3}")]); }
+    if let Some(e) = end_s   { args.extend(["-to".into(), format!("{e:.3}")]); }
+    if !af_filters.is_empty() {
+        args.extend(["-af".into(), af_filters.join(",")]);
+    }
+
+    // Use stream copy only if no filters and trim requested (fast path)
+    if af_filters.is_empty() && (start_s.is_some() || end_s.is_some()) {
+        args.extend(["-c".into(), "copy".into()]);
+    }
+
+    args.push(out.to_string());
+
+    let result = std::process::Command::new("ffmpeg")
+        .args(&args)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if result.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        Err(stderr.lines().last().unwrap_or("ffmpeg error").to_string())
+    }
+}
+
+/// Synchronous audio analysis for spawn_blocking contexts (mirrors apexos-tools logic).
+fn audio_analyze_inner_gw(path: &str) -> Result<serde_json::Value, String> {
+    // ffprobe
+    let probe = std::process::Command::new("ffprobe")
+        .args(["-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", path])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let info: serde_json::Value = serde_json::from_slice(&probe.stdout)
+        .map_err(|e| e.to_string())?;
+
+    let format = info["format"]["format_name"].as_str().unwrap_or("").split(',').next().unwrap_or("").to_string();
+    let duration_s: f64 = info["format"]["duration"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let bit_rate: u64 = info["format"]["bit_rate"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(0);
+    let stream0 = &info["streams"][0];
+    let sample_rate: u32 = stream0["sample_rate"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(0);
+    let channels: u32 = stream0["channels"].as_u64().unwrap_or(0) as u32;
+
+    // loudnorm
+    let ln_out = std::process::Command::new("ffmpeg")
+        .args(["-i", path, "-af", "loudnorm=print_format=json", "-f", "null", "-"])
+        .output().map_err(|e| e.to_string())?;
+    let ln_stderr = String::from_utf8_lossy(&ln_out.stderr).to_string();
+    let ln = gw_extract_json(&ln_stderr).unwrap_or_default();
+    let lufs_integrated: f64 = ln["input_i"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(-99.0);
+
+    // volumedetect
+    let vd_out = std::process::Command::new("ffmpeg")
+        .args(["-i", path, "-af", "volumedetect", "-f", "null", "-"])
+        .output().map_err(|e| e.to_string())?;
+    let vd_stderr = String::from_utf8_lossy(&vd_out.stderr).to_string();
+    let peak_db = gw_parse_af_val(&vd_stderr, "max_volume").unwrap_or(-99.0);
+    let rms_db  = gw_parse_af_val(&vd_stderr, "mean_volume").unwrap_or(-99.0);
+
+    // silencedetect
+    let sd_out = std::process::Command::new("ffmpeg")
+        .args(["-i", path, "-af", "silencedetect=noise=-50dB:d=0.5", "-f", "null", "-"])
+        .output().map_err(|e| e.to_string())?;
+    let sd_stderr = String::from_utf8_lossy(&sd_out.stderr).to_string();
+    let (silence_start_s, silence_end_s) = gw_parse_silence(&sd_stderr, duration_s);
+
+    Ok(serde_json::json!({
+        "duration_s":      duration_s,
+        "sample_rate":     sample_rate,
+        "channels":        channels,
+        "format":          format,
+        "bit_rate":        bit_rate,
+        "peak_db":         peak_db,
+        "rms_db":          rms_db,
+        "lufs_integrated": lufs_integrated,
+        "silence_start_s": silence_start_s,
+        "silence_end_s":   silence_end_s,
+        "has_clipping":    peak_db > -0.1,
+        "dc_offset":       0.0,
+    }))
+}
+
+fn gw_extract_json(text: &str) -> Option<serde_json::Value> {
+    let start = text.rfind('{')?;
+    let mut depth = 0usize;
+    let mut end = start;
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => { depth -= 1; if depth == 0 { end = start + i + 1; break; } }
+            _ => {}
+        }
+    }
+    if depth != 0 { return None; }
+    serde_json::from_str(&text[start..end]).ok()
+}
+
+fn gw_parse_af_val(text: &str, key: &str) -> Option<f64> {
+    text.lines()
+        .find(|l| l.contains(key))?
+        .splitn(2, ':').nth(1)?
+        .split_whitespace().next()?
+        .parse().ok()
+}
+
+fn gw_parse_silence(text: &str, duration_s: f64) -> (f64, f64) {
+    let mut first_end: Option<f64> = None;
+    let mut last_start: Option<f64> = None;
+    for line in text.lines() {
+        if line.contains("silence_start:") {
+            if let Some(v) = line.split("silence_start:").nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse().ok()) {
+                last_start = Some(v);
+            }
+        }
+        if line.contains("silence_end:") {
+            if let Some(v) = line.split("silence_end:").nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse().ok()) {
+                if first_end.is_none() { first_end = Some(v); }
+            }
+        }
+    }
+    let silence_start_s = first_end.unwrap_or(0.0);
+    let silence_end_s   = last_start.map(|s| (duration_s - s).max(0.0)).unwrap_or(0.0);
+    (silence_start_s, silence_end_s)
 }
 
 // ── serve ─────────────────────────────────────────────────────────────────────

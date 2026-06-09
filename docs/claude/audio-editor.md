@@ -323,10 +323,19 @@ No new system packages. No new Cargo deps (we shell out like apexos-tools always
 
 | Phase | What | Status |
 |-------|------|--------|
-| 37a | New apexos-tools tools: `audio_analyze`, `audio_trim_silence`, `audio_normalize`, `audio_peak_limit`, `audio_trim`, `audio_clean` (composite) | ☐ |
-| 37b | Gateway routes: `/api/audio/files`, `/api/audio/analyze`, `/api/audio/waveform`, `/api/audio/process` (op-chain builder) | ☐ |
-| 37c | Desktop Audio Editor window: file picker, waveform canvas, playback, trim handles, auto-fix panel, manual controls, export | ☐ |
-| 37d | Sonus Player → Editor integration: "Edit" button per track; `audio_clean` called automatically after `download_track` if `AUDIO_AUTO_CLEAN=true` | ☐ |
+| 37a | New apexos-tools tools: `audio_analyze`, `audio_trim_silence`, `audio_normalize`, `audio_peak_limit`, `audio_trim`, `audio_clean` (composite) | ✓ |
+| 37b | Gateway routes: `/api/audio/files`, `/api/audio/analyze`, `/api/audio/waveform`, `/api/audio/process` (op-chain builder) | ✓ |
+| 37c | Desktop Audio Editor window: file picker, waveform canvas, playback, trim handles, auto-fix panel, manual controls, export | ✓ |
+| 37d | Sonus Player → Editor integration: "Edit" button per track; `audio_clean` called automatically after `download_track` if `AUDIO_AUTO_CLEAN=true` | ✓ |
+
+## Implementation notes
+
+- `audio_analyze_inner` (tools) and `audio_analyze_inner_gw` (gateway) are intentionally duplicated — tools runs sync in the MCP subprocess, gateway runs it in `spawn_blocking`. Sharing would require a separate crate.
+- Waveform: 4000 Hz mono PCM → max-envelope into 1200 bins. ~1.4 MB for a 3-min track, takes ~1s on Pi 5.
+- `audio_clean` chains ops through `/tmp/apex_audio_{stamp}_*.mp3` temp files and cleans them on completion.
+- loudnorm two-pass: first pass extracts `input_i/tp/lra/thresh/target_offset` from ffmpeg stderr JSON, second pass applies with `linear=true` for higher quality.
+- `/api/audio/process` uses single-pass loudnorm (fast UI path); agent MCP `audio_normalize` uses two-pass for accuracy.
+- Playback in editor reuses `/api/sonus/stream` (HTTP 206 range requests) — no new streaming code.
 
 **37a can be implemented before 37b/c** — the tools work independently and are
 immediately callable by agents. Agent can call `audio_clean` on any Sonus track

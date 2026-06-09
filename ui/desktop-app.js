@@ -168,6 +168,11 @@ const WIN_DEFAULTS = {
     x: 120, y: 60, width: 720, height: 560,
     background: 'var(--wb-bg)',
   },
+  audio: {
+    title: '🎛️ Audio Editor',
+    x: 100, y: 60, width: 800, height: 560,
+    background: 'var(--wb-bg)',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -249,6 +254,7 @@ function openWin(id) {
   if (id === 'eventlog')  setTimeout(eventlogInit, 30);
   if (id === 'mesh')      setTimeout(meshInit, 30);
   if (id === 'inference') setTimeout(inferenceInit, 30);
+  if (id === 'audio')     setTimeout(audioInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -261,6 +267,7 @@ function openWin(id) {
       if (id === 'eventlog')  eventlogStop();
       if (id === 'mesh')      meshStop();
       if (id === 'inference') inferenceStop();
+      if (id === 'audio')     audioStop();
       delete wins[id];
       removeTaskbarTab(id);
       return false;
@@ -1299,6 +1306,17 @@ function playerPrev() {
     return;
   }
   playerSelect(playerIndex <= 0 ? playerTracks.length - 1 : playerIndex - 1);
+}
+
+function playerEditCurrent() {
+  if (playerIndex < 0 || !playerTracks.length) return;
+  const t = playerTracks[playerIndex];
+  // Extract server-side path from the stream URL
+  const url = new URL(t.url, location.href);
+  const path = url.searchParams.get('path') || '';
+  launchApp('audio');
+  // Wait for window to mount, then pre-load the file
+  setTimeout(() => audioLoadFile(path), 200);
 }
 
 // ─── Home / Dashboard ────────────────────────────────────────────────────────
@@ -2434,4 +2452,350 @@ async function inferenceHfSearch() {
 function inferenceSetModel(id) {
   const el = document.getElementById('inf-builder-model');
   if (el) el.value = id;
+}
+
+// ─── Audio Editor ─────────────────────────────────────────────────────────────
+let audioCurrentPath = null;
+let audioDuration    = 0;
+let audioWaveData    = [];
+let audioTrimIn      = 0;
+let audioTrimOut     = 0;
+let audioDragging    = null; // 'in' | 'out' | null
+
+function audioInit() {
+  audioRefreshFiles();
+  const canvas = document.getElementById('audio-waveform');
+  if (canvas) {
+    canvas.addEventListener('click', audioSeekClick);
+  }
+  const trimInEl  = document.getElementById('audio-trim-in');
+  const trimOutEl = document.getElementById('audio-trim-out');
+  if (trimInEl)  setupTrimDrag(trimInEl,  'in');
+  if (trimOutEl) setupTrimDrag(trimOutEl, 'out');
+  const audio = document.getElementById('audio-el');
+  if (audio) {
+    audio.addEventListener('timeupdate', audioTimeUpdate);
+    audio.addEventListener('loadedmetadata', () => {
+      audioDuration = audio.duration;
+      audioTrimOut  = audioDuration;
+      document.getElementById('audio-trim-out-val').value = audioDuration.toFixed(1);
+      audioDrawWaveform();
+    });
+  }
+}
+
+function audioStop() {}
+
+async function audioRefreshFiles() {
+  const sel = document.getElementById('audio-file-select');
+  if (!sel) return;
+  const r = await fetch('/api/audio/files').catch(() => null);
+  if (!r || !r.ok) return;
+  const data = await r.json();
+  const files = data.files || [];
+  sel.innerHTML = '<option value="">— select file —</option>' +
+    files.map(f => `<option value="${f.path}">${f.name}</option>`).join('');
+}
+
+async function audioLoadFile(path) {
+  if (!path) return;
+  audioCurrentPath = path;
+
+  const sel = document.getElementById('audio-file-select');
+  if (sel) sel.value = path;
+
+  // Load audio element
+  const audio = document.getElementById('audio-el');
+  if (audio) {
+    audio.src = `/api/sonus/stream?path=${encodeURIComponent(path)}`;
+    audio.load();
+  }
+
+  // Fetch waveform
+  const r = await fetch('/api/audio/waveform', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, samples: 1200 }),
+  }).catch(() => null);
+
+  if (r && r.ok) {
+    const data = await r.json();
+    audioWaveData = data.samples || [];
+    audioDuration = data.duration_s || 0;
+    audioTrimIn   = 0;
+    audioTrimOut  = audioDuration;
+    document.getElementById('audio-trim-in-val').value  = '0';
+    document.getElementById('audio-trim-out-val').value = audioDuration.toFixed(1);
+    audioDrawWaveform();
+  }
+
+  // Run analysis
+  audioRunAnalysis(path);
+  audioEnableControls(true);
+}
+
+async function audioRunAnalysis(path) {
+  const el = document.getElementById('audio-analysis');
+  if (!el) return;
+  el.innerHTML = '<span class="audio-analyzing">Analyzing…</span>';
+
+  const r = await fetch('/api/audio/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  }).catch(() => null);
+
+  if (!r || !r.ok) { el.textContent = 'Analysis failed.'; return; }
+  const s = await r.json();
+
+  const peakWarn   = s.peak_db > -1.0;
+  const lufsWarn   = s.lufs_integrated < -16 || s.lufs_integrated > -13;
+  const silWarn    = s.silence_end_s > 0.3;
+
+  el.innerHTML = `
+    <div class="audio-stat ${peakWarn ? 'warn' : ''}">Peak: ${s.peak_db.toFixed(1)} dBFS ${peakWarn ? '⚠' : '✓'}</div>
+    <div class="audio-stat ${lufsWarn ? 'warn' : ''}">LUFS: ${s.lufs_integrated.toFixed(1)} ${lufsWarn ? '⚠' : '✓'}</div>
+    <div class="audio-stat ${silWarn ? 'warn' : ''}">Silence tail: ${s.silence_end_s.toFixed(1)}s ${silWarn ? '⚠' : '✓'}</div>
+    <div class="audio-stat">Duration: ${fmtTime(s.duration_s)}</div>
+  `;
+}
+
+function audioEnableControls(on) {
+  ['audio-fix-all-btn','audio-fix-silence-btn','audio-fix-norm-btn',
+   'audio-fix-peak-btn','audio-apply-btn','audio-export-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !on;
+  });
+}
+
+function audioDrawWaveform() {
+  const canvas = document.getElementById('audio-waveform');
+  if (!canvas || !audioWaveData.length) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.parentElement.clientWidth || 760;
+  const H = 100;
+  canvas.width  = W;
+  canvas.height = H;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0a0a12';
+  ctx.fillRect(0, 0, W, H);
+
+  const n = audioWaveData.length;
+  const barW = W / n;
+  const mid  = H / 2;
+
+  audioWaveData.forEach((amp, i) => {
+    const h   = Math.max(1, amp * H * 0.9);
+    const x   = i * barW;
+    // shade trim region
+    const t   = i / n;
+    const inT = audioDuration > 0 ? audioTrimIn / audioDuration : 0;
+    const outT= audioDuration > 0 ? audioTrimOut / audioDuration : 1;
+    ctx.fillStyle = (t >= inT && t <= outT) ? '#00ff88' : '#1a3a2a';
+    ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+  });
+
+  // Playhead
+  const audio = document.getElementById('audio-el');
+  if (audio && audioDuration > 0) {
+    const px = (audio.currentTime / audioDuration) * W;
+    ctx.strokeStyle = '#ffffff88';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, H);
+    ctx.stroke();
+  }
+
+  // Trim handle positions
+  updateTrimHandles(W);
+}
+
+function updateTrimHandles(W) {
+  if (!audioDuration) return;
+  const container = document.getElementById('audio-waveform-container');
+  const cW = container ? container.clientWidth : W;
+
+  const inPct  = (audioTrimIn  / audioDuration) * 100;
+  const outPct = (audioTrimOut / audioDuration) * 100;
+
+  const inEl  = document.getElementById('audio-trim-in');
+  const outEl = document.getElementById('audio-trim-out');
+  if (inEl)  inEl.style.left  = `${inPct}%`;
+  if (outEl) outEl.style.left = `${outPct}%`;
+}
+
+function setupTrimDrag(el, which) {
+  el.addEventListener('mousedown', (e) => {
+    audioDragging = which;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (audioDragging !== which) return;
+    const container = document.getElementById('audio-waveform-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const t    = pct * audioDuration;
+    if (which === 'in') {
+      audioTrimIn = Math.min(t, audioTrimOut - 0.1);
+      document.getElementById('audio-trim-in-val').value = audioTrimIn.toFixed(1);
+    } else {
+      audioTrimOut = Math.max(t, audioTrimIn + 0.1);
+      document.getElementById('audio-trim-out-val').value = audioTrimOut.toFixed(1);
+    }
+    audioDrawWaveform();
+  });
+  document.addEventListener('mouseup', () => { audioDragging = null; });
+}
+
+function audioSeekClick(e) {
+  const canvas = document.getElementById('audio-waveform');
+  const audio  = document.getElementById('audio-el');
+  if (!canvas || !audio || !audioDuration) return;
+  const rect = canvas.getBoundingClientRect();
+  const pct  = (e.clientX - rect.left) / rect.width;
+  audio.currentTime = pct * audioDuration;
+}
+
+function audioTimeUpdate() {
+  const audio = document.getElementById('audio-el');
+  const el    = document.getElementById('audio-time');
+  if (audio && el) {
+    el.textContent = `${fmtTime(audio.currentTime)} / ${fmtTime(audioDuration)}`;
+  }
+  audioDrawWaveform();
+}
+
+function audioPlayPause() {
+  const audio = document.getElementById('audio-el');
+  if (!audio) return;
+  if (audio.paused) audio.play().catch(() => {});
+  else audio.pause();
+}
+
+function audioStop() {
+  const audio = document.getElementById('audio-el');
+  if (audio) { audio.pause(); audio.currentTime = 0; }
+}
+
+function audioSetTrimFromPlayhead(which) {
+  const audio = document.getElementById('audio-el');
+  if (!audio) return;
+  const t = audio.currentTime;
+  if (which === 'in') {
+    audioTrimIn = Math.min(t, audioTrimOut - 0.1);
+    document.getElementById('audio-trim-in-val').value = audioTrimIn.toFixed(1);
+  } else {
+    audioTrimOut = Math.max(t, audioTrimIn + 0.1);
+    document.getElementById('audio-trim-out-val').value = audioTrimOut.toFixed(1);
+  }
+  audioDrawWaveform();
+}
+
+function audioGainUpdate(val) {
+  const el = document.getElementById('audio-gain-val');
+  if (el) el.textContent = `${parseFloat(val).toFixed(1)} dB`;
+}
+
+async function audioAutoFix() {
+  if (!audioCurrentPath) return;
+  const btn = document.getElementById('audio-fix-all-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fixing…'; }
+
+  const stem = audioCurrentPath.replace(/\.[^.]+$/, '');
+  const ext  = audioCurrentPath.match(/\.([^.]+)$/)?.[1] || 'mp3';
+  const outPath = `${stem}_clean.${ext}`;
+
+  const r = await fetch('/api/audio/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path: audioCurrentPath,
+      output_path: outPath,
+      ops: [
+        { type: 'trim_silence', threshold_db: -50 },
+        { type: 'normalize', target_lufs: -14, true_peak: -2 },
+        { type: 'peak_limit', limit_db: -1 },
+      ],
+    }),
+  }).catch(() => null);
+
+  if (btn) { btn.disabled = false; btn.textContent = '🪄 Auto-fix All'; }
+  if (!r || !r.ok) { alert('Auto-fix failed'); return; }
+
+  const data = await r.json();
+  await audioRefreshFiles();
+  await audioLoadFile(data.output_path || outPath);
+}
+
+async function audioApplyOp(type) {
+  if (!audioCurrentPath) return;
+  const stem = audioCurrentPath.replace(/\.[^.]+$/, '');
+  const ext  = audioCurrentPath.match(/\.([^.]+)$/)?.[1] || 'mp3';
+  const suffix = { trim_silence: '_trim', normalize: '_norm', peak_limit: '_lim' }[type] || '_edit';
+  const outPath = `${stem}${suffix}.${ext}`;
+
+  const ops = [{ type }];
+  if (type === 'normalize') ops[0] = { type, target_lufs: -14, true_peak: -2 };
+  if (type === 'peak_limit') ops[0] = { type, limit_db: -1 };
+
+  const r = await fetch('/api/audio/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: audioCurrentPath, output_path: outPath, ops }),
+  }).catch(() => null);
+
+  if (!r || !r.ok) { alert('Operation failed'); return; }
+  const data = await r.json();
+  await audioRefreshFiles();
+  await audioLoadFile(data.output_path || outPath);
+}
+
+async function audioApplyManual() {
+  if (!audioCurrentPath) return;
+  const inVal  = parseFloat(document.getElementById('audio-trim-in-val').value)  || 0;
+  const outVal = parseFloat(document.getElementById('audio-trim-out-val').value) || audioDuration;
+  const gain   = parseFloat(document.getElementById('audio-gain-slider').value)  || 0;
+  const fadeIn = parseFloat(document.getElementById('audio-fade-in-val').value)  || 0;
+  const fadeOut= parseFloat(document.getElementById('audio-fade-out-val').value) || 0;
+
+  const ops = [];
+  if (inVal > 0 || outVal < audioDuration) ops.push({ type: 'trim', start_s: inVal, end_s: outVal });
+  if (Math.abs(gain) > 0.1)  ops.push({ type: 'gain', gain_db: gain });
+  if (fadeIn > 0)  ops.push({ type: 'fade_in', duration_s: fadeIn });
+  if (fadeOut > 0) ops.push({ type: 'fade_out', duration_s: fadeOut, end_s: outVal });
+  if (!ops.length) return;
+
+  const stem    = audioCurrentPath.replace(/\.[^.]+$/, '');
+  const ext     = audioCurrentPath.match(/\.([^.]+)$/)?.[1] || 'mp3';
+  const outPath = `${stem}_manual.${ext}`;
+
+  const r = await fetch('/api/audio/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: audioCurrentPath, output_path: outPath, ops }),
+  }).catch(() => null);
+
+  if (!r || !r.ok) { alert('Apply failed'); return; }
+  const data = await r.json();
+  await audioRefreshFiles();
+  await audioLoadFile(data.output_path || outPath);
+}
+
+async function audioExport() {
+  if (!audioCurrentPath) return;
+  const streamUrl = `/api/sonus/stream?path=${encodeURIComponent(audioCurrentPath)}`;
+  const a = document.createElement('a');
+  a.href = streamUrl;
+  a.download = audioCurrentPath.split('/').pop();
+  a.click();
+}
+
+function fmtTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
 }

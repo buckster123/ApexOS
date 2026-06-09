@@ -134,6 +134,88 @@ pub fn list() -> Value {
                 },
                 "required": ["message"]
             }
+        },
+        {
+            "name": "audio_analyze",
+            "description": "Analyze an audio file: duration, LUFS loudness, peak dB, RMS, silence at start/end, clipping, DC offset. Uses ffprobe + ffmpeg. No modification — read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute path to audio file (.mp3, .wav, .flac, etc.)" }
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "audio_trim_silence",
+            "description": "Remove silence from the start and/or end of an audio file using ffmpeg silenceremove filter.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path":              { "type": "string", "description": "Input audio file path" },
+                    "output_path":       { "type": "string", "description": "Output file path" },
+                    "start":             { "type": "boolean", "description": "Trim silence from start (default true)" },
+                    "end":               { "type": "boolean", "description": "Trim silence from end (default true)" },
+                    "threshold_db":      { "type": "number", "description": "Silence threshold in dB (default -50)" },
+                    "min_silence_ms":    { "type": "integer", "description": "Minimum silence duration to remove in ms (default 500)" }
+                },
+                "required": ["path", "output_path"]
+            }
+        },
+        {
+            "name": "audio_normalize",
+            "description": "Normalize audio loudness to a target LUFS using two-pass ffmpeg loudnorm. Accurate integrated loudness correction.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path":         { "type": "string", "description": "Input audio file path" },
+                    "output_path":  { "type": "string", "description": "Output file path" },
+                    "target_lufs":  { "type": "number", "description": "Target integrated loudness in LUFS (default -14)" },
+                    "true_peak":    { "type": "number", "description": "Max true peak in dBTP (default -2.0)" }
+                },
+                "required": ["path", "output_path"]
+            }
+        },
+        {
+            "name": "audio_peak_limit",
+            "description": "Apply a true-peak limiter to prevent clipping. Uses ffmpeg alimiter filter.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path":         { "type": "string", "description": "Input audio file path" },
+                    "output_path":  { "type": "string", "description": "Output file path" },
+                    "limit_db":     { "type": "number", "description": "Peak limit in dB (default -1.0)" }
+                },
+                "required": ["path", "output_path"]
+            }
+        },
+        {
+            "name": "audio_trim",
+            "description": "Trim an audio file to a specific time range using ffmpeg stream copy (fast, no re-encode).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path":         { "type": "string", "description": "Input audio file path" },
+                    "output_path":  { "type": "string", "description": "Output file path" },
+                    "start_s":      { "type": "number", "description": "Start time in seconds (default 0)" },
+                    "end_s":        { "type": "number", "description": "End time in seconds (required)" }
+                },
+                "required": ["path", "output_path", "end_s"]
+            }
+        },
+        {
+            "name": "audio_clean",
+            "description": "One-shot composite audio fix: analyzes then applies trim_silence, normalize, and/or peak_limit as needed. Ideal post-processing after downloading a Sonus track.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path":                  { "type": "string", "description": "Input audio file path" },
+                    "output_path":           { "type": "string", "description": "Output file path (default: <name>_clean.<ext>)" },
+                    "target_lufs":           { "type": "number", "description": "Target integrated loudness (default -14)" },
+                    "silence_threshold_db":  { "type": "number", "description": "Silence detection threshold (default -50)" }
+                },
+                "required": ["path"]
+            }
         }
     ])
 }
@@ -154,6 +236,12 @@ pub fn call(name: &str, args: &Value) -> Value {
         "memory_info" => memory_info(),
         "uptime" => uptime(),
         "notify" => notify(args),
+        "audio_analyze" => audio_analyze(args),
+        "audio_trim_silence" => audio_trim_silence(args),
+        "audio_normalize" => audio_normalize(args),
+        "audio_peak_limit" => audio_peak_limit(args),
+        "audio_trim" => audio_trim(args),
+        "audio_clean" => audio_clean(args),
         _ => tool_error(format!("unknown tool: {}", name)),
     }
 }
@@ -818,5 +906,387 @@ fn notify(args: &Value) -> Value {
     tool_ok(json!({
         "surfaces_fired": fired,
         "surfaces_failed": failed,
+    }))
+}
+
+// ─── Audio tools ──────────────────────────────────────────────────────────────
+
+/// Run a command and return (stdout, stderr, success).
+fn cmd_capture(prog: &str, args: &[&str]) -> (String, String, bool) {
+    match Command::new(prog).args(args).output() {
+        Ok(o) => (
+            String::from_utf8_lossy(&o.stdout).to_string(),
+            String::from_utf8_lossy(&o.stderr).to_string(),
+            o.status.success(),
+        ),
+        Err(e) => (String::new(), e.to_string(), false),
+    }
+}
+
+/// Extract the last JSON object `{...}` from a string (ffmpeg embeds JSON in log output).
+fn extract_json_from_text(text: &str) -> Option<Value> {
+    let start = text.rfind('{')?;
+    let mut depth = 0usize;
+    let mut end = start;
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = start + i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 { return None; }
+    serde_json::from_str(&text[start..end]).ok()
+}
+
+/// Core analysis — returns a plain JSON object or an error string.
+fn audio_analyze_inner(path: &str) -> Result<Value, String> {
+    // 1. ffprobe: streams + format
+    let (probe_out, _, probe_ok) = cmd_capture("ffprobe", &[
+        "-v", "quiet", "-print_format", "json",
+        "-show_streams", "-show_format", path,
+    ]);
+    if !probe_ok {
+        return Err(format!("ffprobe failed on {path}"));
+    }
+    let probe: Value = serde_json::from_str(&probe_out)
+        .map_err(|e| format!("ffprobe parse: {e}"))?;
+
+    let format = probe["format"]["format_name"].as_str().unwrap_or("").split(',').next().unwrap_or("").to_string();
+    let duration_s: f64 = probe["format"]["duration"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let bit_rate: u64 = probe["format"]["bit_rate"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let stream0 = &probe["streams"][0];
+    let sample_rate: u32 = stream0["sample_rate"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(0);
+    let channels: u32 = stream0["channels"].as_u64().unwrap_or(0) as u32;
+
+    // 2. loudnorm measurement (stderr JSON)
+    let (_, ln_stderr, _) = cmd_capture("ffmpeg", &[
+        "-i", path,
+        "-af", "loudnorm=print_format=json",
+        "-f", "null", "-",
+    ]);
+
+    let ln = extract_json_from_text(&ln_stderr).unwrap_or_default();
+    let lufs_integrated: f64 = ln["input_i"].as_str()
+        .and_then(|s| s.parse().ok()).unwrap_or(-99.0);
+
+    // 3. volumedetect for peak + RMS
+    let (_, vd_stderr, _) = cmd_capture("ffmpeg", &[
+        "-i", path,
+        "-af", "volumedetect",
+        "-f", "null", "-",
+    ]);
+    let peak_db = parse_af_value(&vd_stderr, "max_volume").unwrap_or(-99.0);
+    let rms_db  = parse_af_value(&vd_stderr, "mean_volume").unwrap_or(-99.0);
+
+    // 4. silencedetect for tail/head silence
+    let (_, sd_stderr, _) = cmd_capture("ffmpeg", &[
+        "-i", path,
+        "-af", "silencedetect=noise=-50dB:d=0.5",
+        "-f", "null", "-",
+    ]);
+    let (silence_start_s, silence_end_s) = parse_silence(&sd_stderr, duration_s);
+
+    let has_clipping = peak_db > -0.1;
+    let dc_offset = ln["input_offset"].as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|v| v.abs())
+        .unwrap_or(0.0);
+
+    Ok(json!({
+        "duration_s":       duration_s,
+        "sample_rate":      sample_rate,
+        "channels":         channels,
+        "format":           format,
+        "bit_rate":         bit_rate,
+        "peak_db":          peak_db,
+        "rms_db":           rms_db,
+        "lufs_integrated":  lufs_integrated,
+        "silence_start_s":  silence_start_s,
+        "silence_end_s":    silence_end_s,
+        "has_clipping":     has_clipping,
+        "dc_offset":        dc_offset,
+    }))
+}
+
+/// Parse `key: value` float from ffmpeg volumedetect/astats stderr.
+fn parse_af_value(text: &str, key: &str) -> Option<f64> {
+    for line in text.lines() {
+        if line.contains(key) {
+            let after_colon = line.splitn(2, ':').nth(1)?;
+            let val_str = after_colon.split_whitespace().next()?;
+            return val_str.parse().ok();
+        }
+    }
+    None
+}
+
+/// Parse silence start and end times from silencedetect stderr.
+/// Returns (silence_start_s, silence_end_s) where silence_end_s is seconds of
+/// trailing silence (from end of file) and silence_start_s is leading silence.
+fn parse_silence(text: &str, duration_s: f64) -> (f64, f64) {
+    let mut first_end: Option<f64> = None; // first silence_end = end of leading silence
+    let mut last_start: Option<f64> = None; // last silence_start = start of trailing silence
+
+    for line in text.lines() {
+        if line.contains("silence_start:") {
+            if let Some(v) = line.split("silence_start:").nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse::<f64>().ok())
+            {
+                last_start = Some(v);
+            }
+        }
+        if line.contains("silence_end:") {
+            if let Some(v) = line.split("silence_end:").nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse::<f64>().ok())
+            {
+                if first_end.is_none() { first_end = Some(v); }
+            }
+        }
+    }
+
+    let silence_start_s = first_end.unwrap_or(0.0);
+    let silence_end_s = last_start
+        .map(|start| (duration_s - start).max(0.0))
+        .unwrap_or(0.0);
+
+    (silence_start_s, silence_end_s)
+}
+
+fn audio_analyze(args: &Value) -> Value {
+    let path = match args["path"].as_str() {
+        Some(p) => p,
+        None => return tool_error("path is required"),
+    };
+    match audio_analyze_inner(path) {
+        Ok(stats) => tool_ok(stats),
+        Err(e) => tool_error(e),
+    }
+}
+
+fn audio_trim_silence(args: &Value) -> Value {
+    let path = match args["path"].as_str() { Some(p) => p, None => return tool_error("path required") };
+    let out  = match args["output_path"].as_str() { Some(p) => p, None => return tool_error("output_path required") };
+
+    let trim_start = args["start"].as_bool().unwrap_or(true);
+    let trim_end   = args["end"].as_bool().unwrap_or(true);
+    let thresh_db  = args["threshold_db"].as_f64().unwrap_or(-50.0);
+    let min_ms     = args["min_silence_ms"].as_f64().unwrap_or(500.0);
+    let min_dur    = min_ms / 1000.0;
+
+    let mut parts: Vec<String> = Vec::new();
+    if trim_start {
+        parts.push(format!(
+            "silenceremove=start_periods=1:start_threshold={thresh_db}dB:start_duration={min_dur}"
+        ));
+    }
+    if trim_end {
+        parts.push(format!(
+            "silenceremove=stop_periods=-1:stop_threshold={thresh_db}dB:stop_duration={min_dur}"
+        ));
+    }
+    if parts.is_empty() {
+        return tool_error("at least one of start or end must be true");
+    }
+
+    let filter = parts.join(",");
+    let (_, stderr, ok) = cmd_capture("ffmpeg", &["-y", "-i", path, "-af", &filter, out]);
+    if ok {
+        tool_ok(json!({ "output_path": out }))
+    } else {
+        tool_error(format!("ffmpeg error: {}", stderr.lines().last().unwrap_or("")))
+    }
+}
+
+fn audio_normalize(args: &Value) -> Value {
+    let path        = match args["path"].as_str() { Some(p) => p, None => return tool_error("path required") };
+    let out         = match args["output_path"].as_str() { Some(p) => p, None => return tool_error("output_path required") };
+    let target_lufs = args["target_lufs"].as_f64().unwrap_or(-14.0);
+    let true_peak   = args["true_peak"].as_f64().unwrap_or(-2.0);
+
+    // Pass 1: measure
+    let filter1 = format!("loudnorm=I={target_lufs}:TP={true_peak}:LRA=11:print_format=json");
+    let (_, stderr1, _) = cmd_capture("ffmpeg", &["-i", path, "-af", &filter1, "-f", "null", "-"]);
+
+    let measured = extract_json_from_text(&stderr1).unwrap_or_default();
+    let mi    = measured["input_i"].as_str().unwrap_or("-70");
+    let mtp   = measured["input_tp"].as_str().unwrap_or("-99");
+    let mlra  = measured["input_lra"].as_str().unwrap_or("7");
+    let mth   = measured["input_thresh"].as_str().unwrap_or("-80");
+    let off   = measured["target_offset"].as_str().unwrap_or("0");
+
+    // Pass 2: apply
+    let filter2 = format!(
+        "loudnorm=I={target_lufs}:TP={true_peak}:LRA=11:measured_I={mi}:measured_TP={mtp}:measured_LRA={mlra}:measured_thresh={mth}:offset={off}:linear=true"
+    );
+    let (_, stderr2, ok) = cmd_capture("ffmpeg", &["-y", "-i", path, "-af", &filter2, out]);
+
+    if ok {
+        tool_ok(json!({ "output_path": out, "measured_lufs": mi, "measured_peak": mtp }))
+    } else {
+        tool_error(format!("ffmpeg error: {}", stderr2.lines().last().unwrap_or("")))
+    }
+}
+
+fn audio_peak_limit(args: &Value) -> Value {
+    let path     = match args["path"].as_str() { Some(p) => p, None => return tool_error("path required") };
+    let out      = match args["output_path"].as_str() { Some(p) => p, None => return tool_error("output_path required") };
+    let limit_db = args["limit_db"].as_f64().unwrap_or(-1.0);
+
+    // Convert dBFS to linear (alimiter limit is linear 0..1)
+    let limit_linear = 10f64.powf(limit_db / 20.0);
+    let filter = format!("alimiter=limit={limit_linear:.4}:level_in=1:level_out=1:attack=5:release=50:asc=1");
+
+    let (_, stderr, ok) = cmd_capture("ffmpeg", &["-y", "-i", path, "-af", &filter, out]);
+    if ok {
+        tool_ok(json!({ "output_path": out }))
+    } else {
+        tool_error(format!("ffmpeg error: {}", stderr.lines().last().unwrap_or("")))
+    }
+}
+
+fn audio_trim(args: &Value) -> Value {
+    let path  = match args["path"].as_str() { Some(p) => p, None => return tool_error("path required") };
+    let out   = match args["output_path"].as_str() { Some(p) => p, None => return tool_error("output_path required") };
+    let start = args["start_s"].as_f64().unwrap_or(0.0);
+    let end   = match args["end_s"].as_f64() { Some(e) => e, None => return tool_error("end_s required") };
+
+    let start_str = format!("{start:.3}");
+    let end_str   = format!("{end:.3}");
+    // -c copy avoids re-encode; -ss/-to after -i for sample-accurate trim
+    let (_, stderr, ok) = cmd_capture("ffmpeg", &[
+        "-y", "-i", path, "-ss", &start_str, "-to", &end_str, "-c", "copy", out,
+    ]);
+    if ok {
+        tool_ok(json!({ "output_path": out }))
+    } else {
+        tool_error(format!("ffmpeg error: {}", stderr.lines().last().unwrap_or("")))
+    }
+}
+
+fn audio_clean(args: &Value) -> Value {
+    let path = match args["path"].as_str() { Some(p) => p, None => return tool_error("path required") };
+    let target_lufs = args["target_lufs"].as_f64().unwrap_or(-14.0);
+    let thresh_db   = args["silence_threshold_db"].as_f64().unwrap_or(-50.0);
+
+    // Default output: <stem>_clean.<ext>
+    let out_path_owned: String;
+    let out = match args["output_path"].as_str() {
+        Some(p) => p,
+        None => {
+            let p = std::path::Path::new(path);
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("track");
+            let ext  = p.extension().and_then(|s| s.to_str()).unwrap_or("mp3");
+            let dir  = p.parent().and_then(|d| d.to_str()).unwrap_or(".");
+            out_path_owned = format!("{dir}/{stem}_clean.{ext}");
+            &out_path_owned
+        }
+    };
+
+    // Analyze original
+    let stats_before = match audio_analyze_inner(path) {
+        Ok(s) => s,
+        Err(e) => return tool_error(format!("analyze failed: {e}")),
+    };
+
+    let peak_db         = stats_before["peak_db"].as_f64().unwrap_or(-99.0);
+    let lufs            = stats_before["lufs_integrated"].as_f64().unwrap_or(-99.0);
+    let silence_end_s   = stats_before["silence_end_s"].as_f64().unwrap_or(0.0);
+
+    let mut ops_applied: Vec<&str> = Vec::new();
+    let mut current_input = path.to_string();
+    let mut tmp_files: Vec<String> = Vec::new();
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    // Step 1: trim trailing silence if > 0.3s
+    if silence_end_s > 0.3 {
+        let tmp = format!("/tmp/apex_audio_{stamp}_trim.mp3");
+        let min_dur = 0.5f64;
+        let filter = format!(
+            "silenceremove=stop_periods=-1:stop_threshold={thresh_db}dB:stop_duration={min_dur}"
+        );
+        let (_, _, ok) = cmd_capture("ffmpeg", &["-y", "-i", &current_input, "-af", &filter, &tmp]);
+        if ok {
+            tmp_files.push(tmp.clone());
+            current_input = tmp;
+            ops_applied.push("trim_silence");
+        }
+    }
+
+    // Step 2: normalize if LUFS outside [target-2, target+1]
+    if lufs < target_lufs - 2.0 || lufs > target_lufs + 1.0 {
+        let tmp = format!("/tmp/apex_audio_{stamp}_norm.mp3");
+        // Pass 1
+        let f1 = format!("loudnorm=I={target_lufs}:TP=-2:LRA=11:print_format=json");
+        let (_, stderr1, _) = cmd_capture("ffmpeg", &["-i", &current_input, "-af", &f1, "-f", "null", "-"]);
+        let measured = extract_json_from_text(&stderr1).unwrap_or_default();
+        let mi  = measured["input_i"].as_str().unwrap_or("-70");
+        let mtp = measured["input_tp"].as_str().unwrap_or("-99");
+        let mlra= measured["input_lra"].as_str().unwrap_or("7");
+        let mth = measured["input_thresh"].as_str().unwrap_or("-80");
+        let off = measured["target_offset"].as_str().unwrap_or("0");
+        // Pass 2
+        let f2 = format!(
+            "loudnorm=I={target_lufs}:TP=-2:LRA=11:measured_I={mi}:measured_TP={mtp}:measured_LRA={mlra}:measured_thresh={mth}:offset={off}:linear=true"
+        );
+        let (_, _, ok) = cmd_capture("ffmpeg", &["-y", "-i", &current_input, "-af", &f2, &tmp]);
+        if ok {
+            tmp_files.push(tmp.clone());
+            current_input = tmp;
+            ops_applied.push("normalize");
+        }
+    }
+
+    // Step 3: peak limit if peak > -1 dB
+    if peak_db > -1.0 {
+        let tmp = format!("/tmp/apex_audio_{stamp}_lim.mp3");
+        let limit_linear = 10f64.powf(-1.0f64 / 20.0);
+        let filter = format!("alimiter=limit={limit_linear:.4}:level_in=1:level_out=1:attack=5:release=50:asc=1");
+        let (_, _, ok) = cmd_capture("ffmpeg", &["-y", "-i", &current_input, "-af", &filter, &tmp]);
+        if ok {
+            tmp_files.push(tmp.clone());
+            current_input = tmp;
+            ops_applied.push("peak_limit");
+        }
+    }
+
+    // Copy final result to output path
+    if current_input != out {
+        let (_, stderr, ok) = cmd_capture("ffmpeg", &["-y", "-i", &current_input, "-c", "copy", out]);
+        if !ok {
+            for t in &tmp_files { let _ = std::fs::remove_file(t); }
+            return tool_error(format!("final copy failed: {}", stderr.lines().last().unwrap_or("")));
+        }
+    }
+
+    // Cleanup tmp files
+    for t in &tmp_files {
+        let _ = std::fs::remove_file(t);
+    }
+
+    // Analyze output
+    let stats_after = audio_analyze_inner(out).unwrap_or_default();
+
+    tool_ok(json!({
+        "output_path":  out,
+        "ops_applied":  ops_applied,
+        "stats_before": stats_before,
+        "stats_after":  stats_after,
     }))
 }
