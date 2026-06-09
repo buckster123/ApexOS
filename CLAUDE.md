@@ -68,6 +68,7 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~35c.~~ ✓ bootstrap_node virtual tool — SSH to target Pi, test connectivity, check if already ApexOS, clone repo (git + nohup install.sh), returns immediately with PID; `list_mesh_peers` virtual tool returns peers.toml; both in supervisor + gather_tools
 ~~35d.~~ ✓ Cross-node A2A — `send_to_agent` + optional `node:` field; `find_peer_ws_url()` reads peers.toml (toml crate inline parse); HTTP POST via curl to `{peer_http_base}/api/sessions/{id}/message`; ws_url stored as `ws://host:8787` (no path) so HTTP proxy is correct
 ~~35e.~~ ✓ Desktop mesh panel UI — `🕸 Mesh` in start menu; WinBox with registered peers list (role/status/open/send/remove), avahi-discovered nodes with one-click Register, Bootstrap modal (injects `bootstrap_node` call into agent input), 30s auto-refresh
+36. ☐ Vast.ai inference — `VastState` Arc shared across supervisor+gateway; `vast_launch`/`vast_destroy`/`vast_status`/`vast_list_recipes` virtual tools; `recipes.toml` (curated GPU/model combos); SSH tunnel manager (tokio::process::Child + ControlMaster keepalive); `VastInstanceReady` event hot-swaps OaiProvider backend; `/api/vast/*` gateway routes; desktop `⚡ Inference` window (recipe browser, cost ticker, launch/destroy, recipe builder with live offer search + HF model discovery)
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
@@ -126,6 +127,7 @@ that subsystem — do not load all of them by default.
 | `docs/claude/gateway.md` | `gateway` crate — WebSocket server, intent protocol, state stream |
 | `docs/claude/mesh.md` | multi-Pi mesh — mDNS discovery, peer registry, bootstrap_node tool, cross-node A2A |
 | `docs/claude/mesh-tiers.md` | hardware tier model (Pi 5/4/3B+/Zero), role-aware install roadmap, live test plan, self-expanding mesh vision |
+| `docs/claude/vast-inference.md` | Vast.ai GPU rental — VastState, virtual tools, recipes.toml format, SSH tunnel mechanics, desktop Inference UI, Track B nursery plan |
 
 ---
 
