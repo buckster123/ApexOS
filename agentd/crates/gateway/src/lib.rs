@@ -1407,10 +1407,11 @@ async fn mesh_nodes_handler(State(state): State<GatewayState>) -> impl IntoRespo
         .filter(|(node_id, _)| node_id != my_node_id)  // don't list self
         .map(|(node_id, ip)| {
             let known   = registry.contains(&node_id);
-            let ws_url  = format!("ws://{}:8787/ws", ip);
+            let ws_url  = format!("ws://{}:8787", ip);
             serde_json::json!({
                 "node_id": node_id,
                 "ip":      ip,
+                "port":    8787,
                 "ws_url":  ws_url,
                 "known":   known,
             })

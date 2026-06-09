@@ -107,6 +107,7 @@
       <button class="sm-item" onclick="launchApp('player')"><span class="sm-emoji">🎵</span>Player</button>
       <button class="sm-item" onclick="launchApp('council')"><span class="sm-emoji">⚗</span>Council</button>
       <button class="sm-item" onclick="launchApp('eventlog')"><span class="sm-emoji">📜</span>Event Log</button>
+      <button class="sm-item" onclick="launchApp('mesh')"><span class="sm-emoji">🕸</span>Mesh</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -264,6 +265,35 @@
       <span id="el-count" class="el-count"></span>
     </div>
     <div id="el-events" class="el-events"></div>
+  </div>
+
+  <!-- Mesh panel window -->
+  <div id="win-mesh-content" class="win-content mesh-win" style="display:none">
+    <div class="mesh-toolbar">
+      <span id="mesh-node-id" class="mesh-self-id"></span>
+      <button class="mesh-btn" onclick="meshScan()">⟳ Scan</button>
+      <button class="mesh-btn" onclick="meshBootstrapOpen()">⊕ Bootstrap</button>
+      <label class="el-auto-label" title="Auto-refresh every 30s">
+        <input type="checkbox" id="mesh-auto" onchange="meshAutoToggle(this.checked)" checked> Auto
+      </label>
+    </div>
+    <div class="mesh-section-title">REGISTERED PEERS</div>
+    <div id="mesh-peers" class="mesh-list"></div>
+    <div class="mesh-section-title" id="mesh-disc-title" style="display:none">DISCOVERED (unregistered)</div>
+    <div id="mesh-discovered" class="mesh-list"></div>
+    <!-- Bootstrap modal -->
+    <div id="mesh-bootstrap-modal" class="mesh-bstrap-modal" style="display:none">
+      <div class="mesh-bstrap-title">Bootstrap New Node</div>
+      <input id="mesh-bs-ip"   class="mesh-bstrap-input" placeholder="Target IP (e.g. 192.168.0.200)">
+      <input id="mesh-bs-user" class="mesh-bstrap-input" placeholder="SSH user (default: apexos)">
+      <input id="mesh-bs-pass" class="mesh-bstrap-input" type="password" placeholder="SSH password">
+      <input id="mesh-bs-key"  class="mesh-bstrap-input" placeholder="Anthropic API key (optional)">
+      <div class="mesh-bstrap-btns">
+        <button onclick="meshBootstrapRun()" class="mesh-bs-go">▶ Bootstrap</button>
+        <button onclick="meshBootstrapClose()" class="mesh-bs-cancel">✕</button>
+      </div>
+      <div id="mesh-bs-status" class="mesh-bs-status"></div>
+    </div>
   </div>
 
   <!-- Sub-agent windows spawned dynamically by openSubAgentWin() -->

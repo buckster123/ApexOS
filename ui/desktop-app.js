@@ -158,6 +158,11 @@ const WIN_DEFAULTS = {
     x: 80, y: 60, width: 820, height: 540,
     background: 'var(--wb-bg)',
   },
+  mesh: {
+    title: '🕸 Mesh',
+    x: 100, y: 70, width: 680, height: 480,
+    background: 'var(--wb-bg)',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -237,6 +242,7 @@ function openWin(id) {
   if (id === 'player')    setTimeout(playerInit, 30);
   if (id === 'home')      setTimeout(homeInit, 30);
   if (id === 'eventlog')  setTimeout(eventlogInit, 30);
+  if (id === 'mesh')      setTimeout(meshInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -247,6 +253,7 @@ function openWin(id) {
       content.style.display = 'none';
       if (id === 'home')     homeStop();
       if (id === 'eventlog') eventlogStop();
+      if (id === 'mesh')     meshStop();
       delete wins[id];
       removeTaskbarTab(id);
       return false;
@@ -2058,4 +2065,184 @@ async function eventlogRefresh() {
   listEl.appendChild(frag);
 
   if (btn) btn.disabled = false;
+}
+
+// ─── Mesh panel ───────────────────────────────────────────────────────────────
+
+let meshAutoTimer = null;
+
+function meshInit() {
+  // Show self node ID in toolbar
+  fetch('/api/mesh/peers')
+    .then(r => r.json())
+    .catch(() => null)
+    .then(() => {
+      // node_id comes from hostname; we can read it from /api/mesh/nodes self-filter absence
+      // Just label it with the hostname shown in the URL
+      const selfEl = document.getElementById('mesh-node-id');
+      if (selfEl) selfEl.textContent = '● ' + location.hostname;
+    });
+
+  meshRefresh();
+  if (document.getElementById('mesh-auto')?.checked) {
+    meshAutoTimer = setInterval(meshRefresh, 30000);
+  }
+}
+
+function meshStop() {
+  clearInterval(meshAutoTimer);
+  meshAutoTimer = null;
+}
+
+function meshAutoToggle(on) {
+  clearInterval(meshAutoTimer);
+  meshAutoTimer = on ? setInterval(meshRefresh, 30000) : null;
+}
+
+async function meshRefresh() {
+  await Promise.all([meshLoadPeers(), meshLoadDiscovered()]);
+}
+
+async function meshLoadPeers() {
+  const el = document.getElementById('mesh-peers');
+  if (!el) return;
+  try {
+    const data = await fetch('/api/mesh/peers').then(r => r.json());
+    const peers = data.peers || [];
+    if (!peers.length) {
+      el.innerHTML = '<div style="padding:14px 12px;font-family:var(--mono);font-size:11px;color:var(--text-dim)">No peers registered. Use ⊕ Bootstrap or register via agent.</div>';
+      return;
+    }
+    el.innerHTML = '';
+    peers.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'mesh-peer-row';
+      const httpUrl = (p.ws_url || '').replace('ws://', 'http://').replace('wss://', 'https://');
+      row.innerHTML = `
+        <span class="mesh-peer-id">${p.node_id}</span>
+        <span class="mesh-peer-url">${p.ws_url || ''}</span>
+        <span class="mesh-peer-role">${p.role || 'full'}</span>
+        <span class="mesh-peer-status-${p.status === 'online' ? 'online' : 'offline'}">${p.status || 'online'}</span>
+        <button class="mesh-peer-btn" onclick="window.open('${httpUrl}','_blank')" title="Open UI">↗</button>
+        <button class="mesh-peer-btn" onclick="meshSendMsg('${p.node_id}')" title="Send message">✉</button>
+        <button class="mesh-peer-btn mesh-peer-btn-danger" onclick="meshRemovePeer('${p.node_id}')" title="Remove">✕</button>
+      `;
+      el.appendChild(row);
+    });
+  } catch(e) {
+    el.innerHTML = `<div style="padding:10px 12px;font-family:var(--mono);font-size:11px;color:#f44336">Error loading peers: ${e.message}</div>`;
+  }
+}
+
+async function meshLoadDiscovered() {
+  const listEl  = document.getElementById('mesh-discovered');
+  const titleEl = document.getElementById('mesh-disc-title');
+  if (!listEl || !titleEl) return;
+  try {
+    const data = await fetch('/api/mesh/nodes').then(r => r.json());
+    const nodes = (data.nodes || []).filter(n => !n.known);
+    if (!nodes.length) {
+      titleEl.style.display = 'none';
+      listEl.innerHTML = '';
+      return;
+    }
+    titleEl.style.display = '';
+    listEl.innerHTML = '';
+    nodes.forEach(n => {
+      const row = document.createElement('div');
+      row.className = 'mesh-peer-row';
+      const wsUrl = n.ws_url || `ws://${n.ip}:8787`;
+      const escapedWsUrl = wsUrl.replace(/'/g, "\\'");
+      row.innerHTML = `
+        <span class="mesh-peer-id">${n.node_id}</span>
+        <span class="mesh-peer-url">${n.ip}:${n.port || 8787}</span>
+        <button class="mesh-peer-btn" onclick="meshRegisterDiscovered('${n.node_id}','${escapedWsUrl}')">+ Register</button>
+      `;
+      listEl.appendChild(row);
+    });
+  } catch(e) {
+    titleEl.style.display = 'none';
+  }
+}
+
+async function meshScan() {
+  const btn = document.querySelector('.mesh-btn');
+  if (btn) { btn.textContent = '⟳ Scanning…'; btn.disabled = true; }
+  await meshRefresh();
+  if (btn) { btn.textContent = '⟳ Scan'; btn.disabled = false; }
+}
+
+async function meshRegisterDiscovered(nodeId, wsUrl) {
+  try {
+    await fetch('/api/mesh/peers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: nodeId, ws_url: wsUrl, role: 'full', status: 'online' }),
+    });
+    meshRefresh();
+  } catch(e) {
+    alert('Register failed: ' + e.message);
+  }
+}
+
+async function meshRemovePeer(nodeId) {
+  if (!confirm(`Remove peer ${nodeId}?`)) return;
+  try {
+    await fetch(`/api/mesh/peers/${nodeId}`, { method: 'DELETE' });
+    meshRefresh();
+  } catch(e) {
+    alert('Remove failed: ' + e.message);
+  }
+}
+
+async function meshSendMsg(nodeId) {
+  const msg = prompt(`Message to send to ${nodeId} (root session):`);
+  if (!msg) return;
+  // Use the agent to call send_to_agent with node: field
+  const txt = `send_to_agent to node ${nodeId}: ${msg}`;
+  // Inject into agent input as a shortcut
+  const input = document.getElementById('prompt-input');
+  if (input) {
+    input.value = `Use send_to_agent(session_id: 0, node: "${nodeId}", message: "${msg.replace(/"/g,'\\\"')}")`;
+    input.focus();
+  }
+}
+
+function meshBootstrapOpen() {
+  const modal = document.getElementById('mesh-bootstrap-modal');
+  if (modal) modal.style.display = '';
+}
+
+function meshBootstrapClose() {
+  const modal = document.getElementById('mesh-bootstrap-modal');
+  if (modal) modal.style.display = 'none';
+  const status = document.getElementById('mesh-bs-status');
+  if (status) status.textContent = '';
+}
+
+async function meshBootstrapRun() {
+  const ip   = document.getElementById('mesh-bs-ip')?.value.trim();
+  const user = document.getElementById('mesh-bs-user')?.value.trim() || 'apexos';
+  const pass = document.getElementById('mesh-bs-pass')?.value;
+  const key  = document.getElementById('mesh-bs-key')?.value.trim();
+  const status = document.getElementById('mesh-bs-status');
+
+  if (!ip || !pass) { if (status) status.textContent = 'IP and SSH password are required.'; return; }
+
+  if (status) status.textContent = '⏳ Bootstrapping — injecting into agent…';
+
+  // Build a natural language message that triggers the bootstrap_node virtual tool
+  const parts = [`bootstrap_node(target_ip: "${ip}", ssh_user: "${user}", ssh_password: "${pass}"`];
+  if (key) parts.push(`, api_key: "${key}"`);
+  parts.push(')');
+  const agentMsg = 'Please run: ' + parts.join('');
+
+  const inputEl = document.getElementById('prompt-input');
+  if (inputEl) {
+    inputEl.value = agentMsg;
+    inputEl.focus();
+    if (status) status.textContent = '✓ Message ready in agent input — press Enter to send.';
+  } else {
+    if (status) status.textContent = 'Open the Agent window first, then try again.';
+  }
 }

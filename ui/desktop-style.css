@@ -858,3 +858,66 @@ html, body {
 }
 .el-msg { flex: 1; color: var(--text); word-break: break-word; white-space: pre-wrap; }
 .el-ts  { flex-shrink: 0; font-size: 9px; color: var(--text-dim); }
+
+/* ── Mesh panel ───────────────────────────────────────────────────────────── */
+.mesh-win { display: flex; flex-direction: column; gap: 0; overflow: hidden; position: relative; }
+.mesh-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mesh-self-id {
+  font-family: var(--mono); font-size: 11px; color: var(--accent); flex: 1;
+}
+.mesh-btn {
+  font-family: var(--mono); font-size: 11px;
+  background: transparent; color: var(--accent2);
+  border: 1px solid var(--accent2); border-radius: 3px;
+  padding: 3px 10px; cursor: pointer;
+}
+.mesh-btn:hover { background: var(--accent2); color: #000; }
+.mesh-section-title {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.12em; color: var(--text-dim);
+  padding: 8px 12px 4px; flex-shrink: 0;
+}
+.mesh-list { flex: 1; overflow-y: auto; }
+.mesh-peer-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 11px;
+}
+.mesh-peer-row:hover { background: var(--surface); }
+.mesh-peer-id   { font-weight: 700; color: var(--accent); flex: 1; }
+.mesh-peer-url  { color: var(--text-dim); font-size: 10px; }
+.mesh-peer-role { font-size: 9px; color: var(--accent2); border: 1px solid var(--accent2); border-radius: 2px; padding: 1px 5px; }
+.mesh-peer-status-online  { color: #4caf50; }
+.mesh-peer-status-offline { color: #f44336; }
+.mesh-peer-btn {
+  font-family: var(--mono); font-size: 10px; cursor: pointer;
+  background: transparent; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 2px; padding: 2px 8px;
+}
+.mesh-peer-btn:hover { color: var(--accent2); border-color: var(--accent2); }
+.mesh-peer-btn-danger:hover { color: #f44336; border-color: #f44336; }
+.mesh-bstrap-modal {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: var(--bg); border-top: 2px solid var(--accent2);
+  padding: 12px; display: flex; flex-direction: column; gap: 7px;
+}
+.mesh-bstrap-title { font-family: var(--mono); font-size: 12px; color: var(--accent2); font-weight: 700; }
+.mesh-bstrap-input {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 3px; padding: 5px 8px;
+}
+.mesh-bstrap-btns { display: flex; gap: 8px; }
+.mesh-bs-go {
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+  background: var(--accent2); color: #000; border: none; border-radius: 3px; padding: 4px 16px;
+}
+.mesh-bs-cancel {
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+  background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 4px 10px;
+}
+.mesh-bs-status { font-family: var(--mono); font-size: 10px; color: var(--text-dim); min-height: 16px; }
