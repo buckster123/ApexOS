@@ -18,13 +18,13 @@ agentd/           Cargo workspace (binary + 5 library crates)
     plugins/      MCP-over-stdio client + subprocess supervisor + registry
     store/        Append-only JSONL event log to NVMe (date-rolling files)
   config/         plugins.toml + policy.toml (examples, deployed to /etc/agentd/)
-deploy/           systemd units, apex-wake.py, apexos.avahi.service, setup-voice.sh
+deploy/           systemd units, apex-wake.py, apex-face.py, apexos.avahi.service, setup-voice.sh
 docs/claude/      Lazy-loaded sub-MDs (see ## Docs below)
 docs/archive/     Pre-implementation planning docs (historical context only)
 ui/               Frontend — CLI skin (index.html/style.css/app.js) + Desktop skin (desktop.html/desktop-style.css/desktop-app.js) + lib/ (WinBox+Alpine+xterm.js, no CDN)
 tools/            Separate Cargo workspace for MCP plugins
   crates/
-    apexos-tools/ Shell + fs + http + sysstat + audio MCP server (deployed to /usr/local/bin/)
+    apexos-tools/ Shell + fs + http + sysstat + audio + gpio + display MCP server (deployed to /usr/local/bin/)
 ```
 
 ## Build order (each step independently testable)
@@ -69,7 +69,9 @@ tools/            Separate Cargo workspace for MCP plugins
 ~~35e.~~ ✓ Desktop mesh panel UI — `🕸 Mesh` in start menu; WinBox with registered peers list (role/status/open/send/remove), avahi-discovered nodes with one-click Register, Bootstrap modal (injects `bootstrap_node` call into agent input), 30s auto-refresh
 ~~36.~~ ✓ Vast.ai inference — `VastState` Arc shared across supervisor+gateway; `vast_launch`/`vast_destroy`/`vast_status`/`vast_list_recipes` virtual tools; `recipes.toml` (9 curated GPU/model combos, 3090→B200, Qwen3.6+Carnice); SSH tunnel manager (tokio::process::Child + ControlMaster keepalive, 30s health keepalive); `VastInstanceReady` event hot-swaps OaiProvider backend; `VastInstanceDestroyed` reverts; `/api/vast/{recipes,status,offers,hf-search}` gateway routes; `agentd/config/recipes.toml` deployed to `/etc/agentd/`; desktop `⚡ Inference` window (status badge, active instance panel with cost ticker, recipe browser grouped by GPU, launch/destroy controls, recipe builder with live offer search + HF model browse)
 ~~37.~~ ✓ Audio editor — 6 tools in `apexos-tools` (`audio_analyze`, `audio_trim_silence`, `audio_normalize`, `audio_peak_limit`, `audio_trim`, `audio_clean`; ffmpeg/ffprobe, no new deps); 4 gateway routes (`/api/audio/files`, `/api/audio/analyze`, `/api/audio/waveform`, `/api/audio/process` op-chain builder); desktop `🎛️ Audio Editor` WinBox (waveform canvas with max-envelope PCM at 4 kHz, draggable trim handles, auto-fix panel with analysis badges, manual gain/fade/trim controls, export); Sonus Player `🎛️` Edit button; `audio_clean` composite fix (trim-silence→loudnorm two-pass→peak-limit pipeline into tmp files)
-38a. ⬜ GPIO + display — 7 tools in `apexos-tools` (`gpio_info`, `gpio_read`, `gpio_write`, `gpio_pulse`, `gpio_pwm`, `gpio_servo`, `display_face`); `deploy/apex-face.py` GC9A01A daemon (lgpio+spidev+Pillow, 8fps animation, 7 face states, Unix socket); `deploy/apex-face.service`; Pi 5 gpiochip4 auto-detect; sysfs GPIO for write/pulse; sysfs PWM for pwm/servo; reserved-pin guard (GPIO 2/3 sensor-head I2C, 27/28 HAT EEPROM); Pi deploy pending hardware wiring + `dtparam=spi=on`
+~~38a.~~ ✓ GPIO + display — 7 tools in `apexos-tools` (`gpio_info`, `gpio_read`, `gpio_write`, `gpio_pulse`, `gpio_pwm`, `gpio_servo`, `display_face`); `deploy/apex-face.py` GC9A01A daemon (lgpio+spidev+Pillow, 8fps animation, 7 face states, Unix socket at `/run/apex-face/face.sock`); `deploy/apex-face.service` (RuntimeDirectory=apex-face, gpio+spi groups); Pi 5 gpiochip4 auto-detect; sysfs GPIO for write/pulse; sysfs PWM for pwm/servo; reserved-pin guard (GPIO 2/3 sensor-head I2C, 27/28 HAT EEPROM); `dtparam=spi=on` + `dtoverlay=pwm-2chan` live in config.txt; agentd+apexos users in gpio+spi groups; `apexos-tools up — 25 tools` confirmed; apex-face enabled (starts after display wired + reboot)
+38b. ⬜ Bus→face event bridge — subscribe to bus events in main.rs, auto-drive display_face without APEX needing to call it explicitly (AgentTurnStarted→thinking, AssistantMessage→speaking, WakeTriggered→listening, SensorReading(IAQ>150)→alert, idle timeout→sleeping)
+38c. ⬜ Desktop GPIO panel UI — pin map, read/write/PWM controls, servo slider, face state override
 
 ## Locked decisions (do NOT re-litigate)
 - Language: Rust (single-binary deploy, low memory next to CerebroCortex)
