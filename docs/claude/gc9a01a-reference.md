@@ -169,24 +169,27 @@ Fast partial updates: use CASET/RASET to limit write window to changed region.
 
 ## Module pinout (SYS-SPI GC9A01A, 11-pin)
 
-Probable pinout based on standard GC9A01A + SD modules:
+**Confirmed silkscreen** (left to right): `lite, sd_cs, DC, RST, TFTCS, > MOSI, < MISO, > SCK, Gnd, 3.3v, Vin`
 
-| Module pin | Signal | Pi GPIO | Pi physical pin |
-|-----------|--------|---------|-----------------|
-| VCC | 3.3V | — | Pin 1 |
-| GND | Ground | — | Pin 6 |
-| SCL | SPI SCLK | GPIO 11 | Pin 23 |
-| SDA | SPI MOSI | GPIO 10 | Pin 19 |
-| RES | Reset | GPIO 25 | Pin 22 |
-| DC | Data/Command | GPIO 24 | Pin 18 |
-| CS | Display CS | GPIO 8 (CE0) | Pin 24 |
-| BLK | Backlight | GPIO 18 (PWM) | Pin 12 |
-| SD_CS | SD card CS | GPIO 7 (CE1) | Pin 26 |
-| MISO | SPI MISO (SD) | GPIO 9 | Pin 21 |
-| *(11th)* | Touch INT or NC | — | leave floating |
+`>` = signal into module (host drives), `<` = signal out of module (host reads).
+FPC connector is separate — capacitive touch, not part of the 11-pin header.
 
-**Verify against your module's silkscreen before wiring.**
-SD card shares SPI bus (different CS). FPC connector = likely capacitive touch (GT911), ignore for now.
+| Silkscreen | Signal | Pi GPIO | Pi physical pin | Notes |
+|------------|--------|---------|-----------------|-------|
+| `Vin` | Power in (LDO) | — | Pin 1 (3.3V) | 3.3V–5V range, onboard regulator |
+| `3.3v` | 3.3V bypass | — | **leave open** | Direct bypass; don't use both |
+| `Gnd` | Ground | — | Pin 6 | |
+| `SCK` | SPI clock | GPIO 11 | Pin 23 | |
+| `MOSI` | SPI data in | GPIO 10 | Pin 19 | |
+| `MISO` | SPI data out | GPIO 9 | Pin 21 | SD card reads only |
+| `TFTCS` | Display CS | GPIO 8 (CE0) | Pin 24 | |
+| `RST` | Reset | GPIO 25 | Pin 22 | |
+| `DC` | Data/Command | GPIO 24 | Pin 18 | |
+| `sd_cs` | SD card CS | GPIO 7 (CE1) | Pin 26 | |
+| `lite` | Backlight | GPIO 18 (PWM) | Pin 12 | HIGH=on; PWM for dimming |
+
+SD card shares MOSI/MISO/SCK with display — different CS pins keep them separate.
+FPC connector = capacitive touch (GT911 or similar), ignore for step 38b, useful future feature.
 
 ---
 
