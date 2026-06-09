@@ -538,13 +538,60 @@ impl Supervisor {
             return;
         }
 
-        // Virtual tool: send_to_agent — fire-and-forget async peer-to-peer message.
+        // Virtual tool: send_to_agent — local or cross-node A2A message.
+        // With node: routes via HTTP to a registered peer's /api/sessions/{id}/message.
         if call.tool == "send_to_agent" {
-            let to_id   = call.args["session_id"].as_u64().map(SessionId);
-            let body    = call.args["message"].as_str().unwrap_or("").to_owned();
-            let call_id = call.id;
-            let msg_id  = call.id.0;
-            let bus     = self.bus.clone();
+            let to_id    = call.args["session_id"].as_u64().map(SessionId);
+            let body     = call.args["message"].as_str().unwrap_or("").to_owned();
+            let node_arg = call.args["node"].as_str().map(str::to_owned);
+            let call_id  = call.id;
+            let msg_id   = call.id.0;
+            let bus      = self.bus.clone();
+
+            // Cross-node: look up peer, proxy via HTTP.
+            if let Some(node_id) = node_arg {
+                let sid = to_id.unwrap_or(SessionId(0)).0;
+                tokio::spawn(async move {
+                    let peer_ws_url = find_peer_ws_url(&node_id).await;
+                    match peer_ws_url {
+                        None => {
+                            bus.emit(Event::ToolResult {
+                                session, call: call_id,
+                                output: ToolOutput {
+                                    ok:      false,
+                                    content: serde_json::json!(format!("send_to_agent: peer '{node_id}' not found in peers.toml")),
+                                },
+                            }).await;
+                        }
+                        Some(ws_url) => {
+                            let http_base = ws_url.replacen("ws://", "http://", 1)
+                                                  .replacen("wss://", "https://", 1);
+                            let url      = format!("{http_base}/api/sessions/{sid}/message");
+                            let payload  = serde_json::json!({ "text": body }).to_string();
+                            let result   = tokio::process::Command::new("curl")
+                                .args(["-s", "-f", "-X", "POST",
+                                       "-H", "Content-Type: application/json",
+                                       "-d", &payload, &url])
+                                .output().await;
+                            let ok = result.map(|o| o.status.success()).unwrap_or(false);
+                            bus.emit(Event::ToolResult {
+                                session, call: call_id,
+                                output: ToolOutput {
+                                    ok,
+                                    content: serde_json::json!({
+                                        "status": if ok { "sent" } else { "error" },
+                                        "node": node_id,
+                                        "target_session": sid,
+                                    }),
+                                },
+                            }).await;
+                        }
+                    }
+                });
+                return;
+            }
+
+            // Local: emit AgentMessage on bus.
             match to_id {
                 Some(to) => {
                     tokio::spawn(async move {
@@ -961,4 +1008,19 @@ fn format_event_line(v: &serde_json::Value) -> Option<String> {
         other => format!("[{other}]"),
     };
     Some(line)
+}
+
+// ── mesh helpers ──────────────────────────────────────────────────────────────
+
+/// Look up a peer's ws_url by node_id in peers.toml. Async because it reads a file.
+async fn find_peer_ws_url(node_id: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct PeersFile { #[serde(default)] peer: Vec<PeerEntry> }
+    #[derive(serde::Deserialize)]
+    struct PeerEntry { node_id: String, ws_url: String }
+
+    let path = std::env::var("PEERS_TOML").unwrap_or_else(|_| "/etc/agentd/peers.toml".into());
+    let raw  = tokio::fs::read_to_string(&path).await.ok()?;
+    let file: PeersFile = toml::from_str(&raw).ok()?;
+    file.peer.into_iter().find(|p| p.node_id == node_id).map(|p| p.ws_url)
 }

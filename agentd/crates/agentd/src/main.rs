@@ -1343,19 +1343,24 @@ fn send_to_agent_spec() -> ToolSpec {
     ToolSpec {
         name:        "send_to_agent".into(),
         description: "Send an asynchronous message to another agent session (fire-and-forget). \
-                      The target session receives the message as a new autonomous turn prefixed \
-                      with '[Agent N]:'. Returns immediately — use agent_spawn if you need the \
-                      result. Use GET /api/sessions to list active session IDs.".into(),
+                      Without node: routes locally on this machine. \
+                      With node: proxies to a registered mesh peer — session_id 0 = root session on that node. \
+                      Returns immediately — use agent_spawn if you need the result.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "session_id": {
                     "type":        "integer",
-                    "description": "Target session ID."
+                    "description": "Target session ID (use 0 for the remote node's root session)."
                 },
                 "message": {
                     "type":        "string",
                     "description": "Message to deliver to the target agent."
+                },
+                "node": {
+                    "type":        "string",
+                    "description": "Optional mesh node_id (hostname) to route to a peer node. \
+                                   Omit for local routing."
                 }
             },
             "required": ["session_id", "message"]
