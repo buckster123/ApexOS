@@ -575,6 +575,168 @@ impl Supervisor {
             return;
         }
 
+        // Virtual tool: list_mesh_peers — returns current peers.toml as JSON.
+        if call.tool == "list_mesh_peers" {
+            let call_id = call.id;
+            let bus     = self.bus.clone();
+            tokio::spawn(async move {
+                let path = std::env::var("PEERS_TOML")
+                    .unwrap_or_else(|_| "/etc/agentd/peers.toml".into());
+                let content = tokio::fs::read_to_string(&path).await
+                    .unwrap_or_else(|_| "# no peers registered\n".into());
+                bus.emit(Event::ToolResult {
+                    session, call: call_id,
+                    output: ToolOutput { ok: true, content: serde_json::json!(content) },
+                }).await;
+            });
+            return;
+        }
+
+        // Virtual tool: bootstrap_node — SSH to target, clone ApexOS repo, background install.sh.
+        // Returns quickly; install takes 15-20 min and node appears in mesh via mDNS.
+        if call.tool == "bootstrap_node" {
+            let target_ip   = call.args["target_ip"].as_str().unwrap_or("").to_owned();
+            let ssh_password = call.args["ssh_password"].as_str().unwrap_or("").to_owned();
+            let ssh_user    = call.args["ssh_user"].as_str().unwrap_or("apexos").to_owned();
+            let api_key     = call.args["api_key"].as_str().unwrap_or("").to_owned();
+            let repo_url    = call.args["repo_url"].as_str()
+                .unwrap_or("https://github.com/buckster123/ApexOS.git").to_owned();
+            let call_id     = call.id;
+            let bus         = self.bus.clone();
+
+            if target_ip.is_empty() || ssh_password.is_empty() {
+                tokio::spawn(async move {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput {
+                            ok:      false,
+                            content: serde_json::json!("bootstrap_node: target_ip and ssh_password are required"),
+                        },
+                    }).await;
+                });
+                return;
+            }
+
+            tokio::spawn(async move {
+                let ssh_base = vec![
+                    "sshpass".to_string(),
+                    format!("-p{ssh_password}"),
+                    "ssh".into(),
+                    "-o".into(), "StrictHostKeyChecking=no".into(),
+                    "-o".into(), "ConnectTimeout=5".into(),
+                    format!("{ssh_user}@{target_ip}"),
+                ];
+
+                // Step 1: connectivity check
+                let ok = tokio::process::Command::new(&ssh_base[0])
+                    .args(&ssh_base[1..])
+                    .arg("echo OK")
+                    .output().await;
+                match ok {
+                    Err(e) => {
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput {
+                                ok:      false,
+                                content: serde_json::json!(format!("SSH to {target_ip} failed: {e}")),
+                            },
+                        }).await;
+                        return;
+                    }
+                    Ok(o) if !o.status.success() => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput {
+                                ok:      false,
+                                content: serde_json::json!(format!("SSH auth failed for {ssh_user}@{target_ip}: {stderr}")),
+                            },
+                        }).await;
+                        return;
+                    }
+                    _ => {}
+                }
+
+                // Step 2: check if already an ApexOS node
+                let check = tokio::process::Command::new(&ssh_base[0])
+                    .args(&ssh_base[1..])
+                    .arg("systemctl is-active agentd 2>/dev/null || echo inactive")
+                    .output().await;
+                if let Ok(o) = check {
+                    let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if out == "active" {
+                        bus.emit(Event::ToolResult {
+                            session, call: call_id,
+                            output: ToolOutput {
+                                ok:      true,
+                                content: serde_json::json!(format!(
+                                    "{target_ip} is already running agentd. Register it manually with POST /api/mesh/peers."
+                                )),
+                            },
+                        }).await;
+                        return;
+                    }
+                }
+
+                // Step 3: install git if needed, clone repo
+                let prep_cmd = format!(
+                    "apt-get install -y -q git 2>/dev/null; \
+                     git clone {repo_url} /home/{ssh_user}/ApexOS 2>/dev/null || \
+                     git -C /home/{ssh_user}/ApexOS pull"
+                );
+                let prep = tokio::time::timeout(
+                    tokio::time::Duration::from_secs(60),
+                    tokio::process::Command::new(&ssh_base[0])
+                        .args(&ssh_base[1..])
+                        .arg(format!("echo '{ssh_password}' | sudo -S bash -c {prep_cmd:?}"))
+                        .output(),
+                ).await;
+                if prep.is_err() {
+                    bus.emit(Event::ToolResult {
+                        session, call: call_id,
+                        output: ToolOutput {
+                            ok:      false,
+                            content: serde_json::json!("bootstrap_node: git clone timed out"),
+                        },
+                    }).await;
+                    return;
+                }
+
+                // Step 4: inject API key (if provided) and background install.sh
+                let api_key_export = if api_key.is_empty() {
+                    String::new()
+                } else {
+                    format!("export ANTHROPIC_API_KEY={api_key:?}; ")
+                };
+                let install_cmd = format!(
+                    "cd /home/{ssh_user}/ApexOS && \
+                     {api_key_export}\
+                     nohup bash install.sh > /tmp/apex-install.log 2>&1 &\
+                     echo $!"
+                );
+                let launch = tokio::process::Command::new(&ssh_base[0])
+                    .args(&ssh_base[1..])
+                    .arg(format!("echo '{ssh_password}' | sudo -S bash -c {install_cmd:?}"))
+                    .output().await;
+
+                let pid_line = launch.as_ref().ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+
+                let msg = format!(
+                    "Bootstrap of {ssh_user}@{target_ip} started (PID {pid_line}). \
+                     install.sh is running in background — takes 15-20 min. \
+                     Monitor: ssh {ssh_user}@{target_ip} tail -f /tmp/apex-install.log. \
+                     The node will appear in the mesh automatically once Avahi starts."
+                );
+                bus.emit(Event::ToolResult {
+                    session, call: call_id,
+                    output: ToolOutput { ok: true, content: serde_json::json!(msg) },
+                }).await;
+            });
+            return;
+        }
+
         // Virtual tool: agent_spawn is handled by the async router, not an MCP plugin.
         if call.tool == "agent_spawn" {
             let prompt  = call.args["prompt"].as_str().unwrap_or("").to_owned();

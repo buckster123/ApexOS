@@ -1084,6 +1084,8 @@ async fn gather_tools(
     tools.push(convene_council_spec());
     tools.push(send_to_agent_spec());
     tools.push(query_event_log_spec());
+    tools.push(list_mesh_peers_spec());
+    tools.push(bootstrap_node_spec());
     tools
 }
 
@@ -1357,6 +1359,55 @@ fn send_to_agent_spec() -> ToolSpec {
                 }
             },
             "required": ["session_id", "message"]
+        }),
+    }
+}
+
+fn list_mesh_peers_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "list_mesh_peers".into(),
+        description: "Return the current mesh peer registry (peers.toml) as text. \
+                      Shows all registered ApexOS nodes with their ws_url, role, and status.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+    }
+}
+
+fn bootstrap_node_spec() -> ToolSpec {
+    ToolSpec {
+        name:        "bootstrap_node".into(),
+        description: "Bootstrap a fresh Raspberry Pi as an ApexOS mesh node via SSH. \
+                      Clones the ApexOS repo and runs install.sh in the background (~15-20 min). \
+                      The node appears in the mesh automatically once Avahi starts. \
+                      Returns immediately with a status message.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target_ip": {
+                    "type":        "string",
+                    "description": "IP address of the target Pi to bootstrap."
+                },
+                "ssh_password": {
+                    "type":        "string",
+                    "description": "SSH password for the target Pi."
+                },
+                "ssh_user": {
+                    "type":        "string",
+                    "description": "SSH username on the target Pi (default: apexos)."
+                },
+                "api_key": {
+                    "type":        "string",
+                    "description": "Anthropic API key to inject into /etc/agentd/env on the new node."
+                },
+                "repo_url": {
+                    "type":        "string",
+                    "description": "Git repo URL (default: https://github.com/buckster123/ApexOS.git)."
+                }
+            },
+            "required": ["target_ip", "ssh_password"]
         }),
     }
 }
