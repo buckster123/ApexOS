@@ -125,6 +125,7 @@ that subsystem — do not load all of them by default.
 | `docs/claude/pi-deploy.md` | Pi 5 target — RaspiOS setup, NVMe, systemd, cage kiosk, first deploy |
 | `docs/claude/gateway.md` | `gateway` crate — WebSocket server, intent protocol, state stream |
 | `docs/claude/mesh.md` | multi-Pi mesh — mDNS discovery, peer registry, bootstrap_node tool, cross-node A2A |
+| `docs/claude/mesh-tiers.md` | hardware tier model (Pi 5/4/3B+/Zero), role-aware install roadmap, live test plan, self-expanding mesh vision |
 
 ---
 
