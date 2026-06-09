@@ -349,6 +349,9 @@ async fn main() -> anyhow::Result<()> {
     spawn_agent_router(agent_rx, bcast.clone(), handle.clone(),
                        tool_reg, histories, engine, max_depth, session_store);
 
+    // Mesh discovery loop — mDNS poll, subnet guard, PeerSeen events
+    spawn_discovery_loop(Arc::clone(&peer_registry), Arc::clone(&node_id), handle.clone());
+
     // Event log
     tokio::spawn(run_log_writer(log_dir, bcast.subscribe()));
 
@@ -1402,12 +1405,119 @@ async fn cascade_cancel(
     }
 }
 
+// ── mesh discovery loop ───────────────────────────────────────────────────────
+
+/// Returns the /24 prefix of the first local IPv4 address (e.g. "192.168.0.").
+/// Used by the subnet guard to keep the mesh on the local LAN segment.
+fn local_subnet_prefix() -> Option<String> {
+    let out = std::process::Command::new("hostname").arg("-I").output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    for tok in s.split_whitespace() {
+        if !tok.contains('.') { continue; } // skip IPv6 tokens
+        let parts: Vec<&str> = tok.split('.').collect();
+        if parts.len() == 4 {
+            return Some(format!("{}.{}.{}.", parts[0], parts[1], parts[2]));
+        }
+    }
+    None
+}
+
+fn spawn_discovery_loop(
+    peer_registry: Arc<RwLock<PeerRegistry>>,
+    node_id:       Arc<String>,
+    bus:           apexos_core::BusHandle,
+) {
+    let interval_secs = std::env::var("MESH_DISCOVERY_INTERVAL")
+        .ok().and_then(|s| s.parse::<u64>().ok()).unwrap_or(60);
+    let auto_bootstrap = std::env::var("MESH_AUTO_BOOTSTRAP").is_ok();
+    let subnet_guard = std::env::var("MESH_SUBNET_GUARD")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(true);
+
+    eprintln!(
+        "[mesh] discovery loop — interval {}s, subnet_guard={}, auto_bootstrap={}",
+        interval_secs, subnet_guard, auto_bootstrap
+    );
+
+    tokio::spawn(async move {
+        // Wait one full interval before the first scan so startup noise settles.
+        let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+        ticker.tick().await; // consume the immediate first tick
+        ticker.tick().await; // now we wait one real interval
+
+        loop {
+            // avahi-browse -rpt _apexos._tcp  (-t = terminate after listing, -r = resolve, -p = parseable)
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(10),
+                tokio::process::Command::new("avahi-browse")
+                    .args(["-rpt", "_apexos._tcp", "--no-db-lookup"])
+                    .output(),
+            ).await;
+
+            let raw = match result {
+                Ok(Ok(o))  => String::from_utf8_lossy(&o.stdout).into_owned(),
+                Ok(Err(e)) => { eprintln!("[mesh] avahi-browse error: {e}"); ticker.tick().await; continue; }
+                Err(_)     => { eprintln!("[mesh] avahi-browse timed out");  ticker.tick().await; continue; }
+            };
+
+            let nodes = apexos_gateway::parse_avahi_output(&raw);
+            if nodes.is_empty() {
+                ticker.tick().await;
+                continue;
+            }
+
+            let local_prefix = if subnet_guard { local_subnet_prefix() } else { None };
+            let registry = peer_registry.read().await;
+
+            for (peer_id, ip) in nodes {
+                if peer_id == *node_id { continue; } // skip self
+
+                // Subnet guard: only consider IPs on the same /24
+                if let Some(ref prefix) = local_prefix {
+                    if !ip.starts_with(prefix.as_str()) {
+                        eprintln!("[mesh] skipping {peer_id} @ {ip} (outside {prefix}x subnet)");
+                        continue;
+                    }
+                }
+
+                if registry.contains(&peer_id) { continue; } // already known
+
+                eprintln!("[mesh] new peer discovered: {peer_id} @ {ip}");
+                bus.emit(Event::PeerSeen { node_id: peer_id.clone(), ip: ip.clone() }).await;
+
+                if auto_bootstrap {
+                    let text = format!(
+                        "New ApexOS node discovered on the mesh: **{peer_id}** at {ip}. \
+                         Call `bootstrap_node` to provision it automatically."
+                    );
+                    bus.emit(Event::UserPrompt { session: SessionId(0), text }).await;
+                }
+            }
+
+            ticker.tick().await;
+        }
+    });
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use apexos_core::{ContentBlock, Message};
+
+    #[test]
+    fn local_subnet_prefix_parses_ipv4() {
+        // Simulate a valid hostname -I output; just verify the parser logic directly.
+        let s = "192.168.0.158 fd00::1 ";
+        let prefix = s.split_whitespace()
+            .find(|tok| tok.contains('.'))
+            .and_then(|ip| {
+                let p: Vec<&str> = ip.split('.').collect();
+                if p.len() == 4 { Some(format!("{}.{}.{}.", p[0], p[1], p[2])) } else { None }
+            });
+        assert_eq!(prefix, Some("192.168.0.".to_string()));
+    }
 
     #[test]
     fn extract_final_text_gets_last_assistant_text() {

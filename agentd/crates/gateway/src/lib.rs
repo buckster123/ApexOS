@@ -9,7 +9,7 @@ use axum::{
     routing::{delete, get, post},
 };
 pub mod mesh;
-pub use mesh::{PeerRecord, PeerRegistry, PeerRole};
+pub use mesh::{parse_avahi_output, PeerRecord, PeerRegistry, PeerRole};
 use serde::{Deserialize, Serialize};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
