@@ -223,12 +223,27 @@ chown -R agentd:agentd /var/lib/agentd
 chmod 700 /var/lib/agentd
 chmod 750 /etc/agentd
 
-# Power control sudoers
-cat > /etc/sudoers.d/agentd-power << 'EOF'
-agentd ALL=(ALL) NOPASSWD: /bin/systemctl reboot, /bin/systemctl poweroff
+# Power control via polkit (NOT sudo — agentd.service sets NoNewPrivileges=true,
+# which blocks sudo's setuid escalation. systemctl reboot/poweroff goes through
+# logind + polkit, so we authorize the agentd user for those actions directly.)
+rm -f /etc/sudoers.d/agentd-power   # remove dead sudoers rule from older installs
+mkdir -p /etc/polkit-1/rules.d
+cat > /etc/polkit-1/rules.d/49-agentd-power.rules << 'EOF'
+// Allow the unprivileged agentd user to reboot/power off the Pi.
+// Used by gateway's POST /api/power (the desktop/CLI power modal).
+polkit.addRule(function(action, subject) {
+    if (subject.user == "agentd" &&
+        (action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions")) {
+        return polkit.Result.YES;
+    }
+});
 EOF
-chmod 440 /etc/sudoers.d/agentd-power
-ok "Directories, permissions, sudoers ready"
+chmod 644 /etc/polkit-1/rules.d/49-agentd-power.rules
+systemctl try-restart polkit 2>/dev/null || true
+ok "Directories, permissions, polkit power rule ready"
 
 # ── Rust toolchain ─────────────────────────────────────────────────────────────
 hdr "Rust toolchain"

@@ -535,8 +535,12 @@ async fn power_handler(
         "shutdown" => "poweroff",
         _ => return Json(serde_json::json!({ "ok": false, "error": "unknown action" })),
     };
-    match tokio::process::Command::new("sudo")
-        .args(["systemctl", cmd])
+    // Call systemctl directly — NOT via sudo. agentd runs with
+    // NoNewPrivileges=true, which blocks sudo's setuid escalation entirely.
+    // `systemctl reboot/poweroff` routes through logind + polkit; the agentd
+    // user is authorized by /etc/polkit-1/rules.d/49-agentd-power.rules.
+    match tokio::process::Command::new("systemctl")
+        .arg(cmd)
         .output()
         .await
     {
