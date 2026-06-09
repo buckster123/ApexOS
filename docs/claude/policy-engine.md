@@ -44,6 +44,15 @@ Every approval/denial flows through the bus → event log = free audit trail.
 - `pending_approvals: HashMap<ActionId, PendingApproval>` — tracked in supervisor
 - `dispatch_tool(&self, session, call)` — non-async, spawns task; handles unknown-tool error
 
+## Self-evolution of rules (footgun)
+`EvolutionProposal::UpdatePolicyRule` carries `new_rule: PolicyRule` (`allow`/`ask`/
+`workspace`) — the value side of `[rules]`. It is NOT a `PolicyMode`
+(`suggest`/`auto-edit`/`yolo`). Writing a mode name into `[rules]` makes
+policy.toml fail to deserialize on the next load and silently wipes every rule.
+The applier validate-before-persists (parse candidate → `write_atomic` rename)
+so a bad proposal can never corrupt the live file. Regression test:
+`plugins::policy::tests::policy_rule_toml_strings_are_valid_rule_values`.
+
 ## Deferred to keyboard
 - `workspace` rule path check against `AGENTD_WORKSPACE` env var
 - UI for rendering `ApprovalPending` in the browser frontend

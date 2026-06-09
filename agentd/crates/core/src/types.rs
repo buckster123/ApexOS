@@ -33,6 +33,45 @@ pub enum PolicyMode {
     Yolo,
 }
 
+/// Per-tool approval rule — the value side of the `[rules]` table in policy.toml.
+/// Lives here so `EvolutionProposal::UpdatePolicyRule` can reference it without a
+/// circular dep. `plugins::policy::Rule` mirrors these variants 1:1.
+///
+/// NOTE: this is distinct from [`PolicyMode`] (the global mode). The `[rules]`
+/// table accepts `allow`/`ask`/`workspace`, NOT the mode names — conflating the
+/// two corrupts policy.toml on reload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolicyRule {
+    /// Auto-approve regardless of mode (overridden by yolo).
+    Allow,
+    /// Always ask (overridden by yolo).
+    Ask,
+    /// Auto if path is inside the workspace, else ask.
+    Workspace,
+}
+
+impl PolicyRule {
+    /// The exact string written into the `[rules]` table of policy.toml.
+    pub fn as_toml_str(self) -> &'static str {
+        match self {
+            PolicyRule::Allow     => "allow",
+            PolicyRule::Ask       => "ask",
+            PolicyRule::Workspace => "workspace",
+        }
+    }
+
+    /// Parse from a policy.toml rule value. Returns None for unknown strings.
+    pub fn from_toml_str(s: &str) -> Option<Self> {
+        match s {
+            "allow"     => Some(PolicyRule::Allow),
+            "ask"       => Some(PolicyRule::Ask),
+            "workspace" => Some(PolicyRule::Workspace),
+            _           => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Subsystem {
@@ -59,7 +98,8 @@ pub enum EvolutionProposal {
     },
     UpdatePolicyRule {
         tool_pattern: String,
-        new_mode:     PolicyMode,
+        /// Per-tool rule (`allow`/`ask`/`workspace`) — NOT a [`PolicyMode`].
+        new_rule:     PolicyRule,
         reason:       String,
     },
     /// Full replacement content for /etc/agentd/soul.md (not a diff — full

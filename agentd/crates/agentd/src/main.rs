@@ -711,17 +711,16 @@ async fn compute_undo(
             })
         }
         EvolutionProposal::UpdatePolicyRule { tool_pattern, .. } => {
-            let toml_text = tokio::fs::read_to_string(policy_path).await.ok()?;
-            let doc       = toml_text.parse::<toml_edit::DocumentMut>().ok()?;
-            let old_mode_str = doc.get("rules")?.as_table()?.get(tool_pattern.as_str())?.as_str()?;
-            let old_mode = match old_mode_str {
-                "auto-edit" => PolicyMode::AutoEdit,
-                "yolo"      => PolicyMode::Yolo,
-                _           => PolicyMode::Suggest,
-            };
+            // Snapshot the prior rule value so rollback restores it exactly.
+            // If the rule didn't exist before (brand-new addition), there is no
+            // meaningful inverse (we have no "remove rule" variant) — return None.
+            let toml_text    = tokio::fs::read_to_string(policy_path).await.ok()?;
+            let doc          = toml_text.parse::<toml_edit::DocumentMut>().ok()?;
+            let old_rule_str = doc.get("rules")?.as_table()?.get(tool_pattern.as_str())?.as_str()?;
+            let old_rule     = apexos_core::PolicyRule::from_toml_str(old_rule_str)?;
             Some(EvolutionProposal::UpdatePolicyRule {
                 tool_pattern: tool_pattern.clone(),
-                new_mode:     old_mode,
+                new_rule:     old_rule,
                 reason:       "rollback".into(),
             })
         }
@@ -750,6 +749,21 @@ async fn compute_undo(
     }
 }
 
+/// Write bytes to `path` atomically: write a sibling temp file, then rename over
+/// the target. Prevents a partial/corrupt config from ever being observed by a
+/// concurrent read or a daemon restart mid-write.
+async fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let tmp = path.with_extension(format!(
+        "tmp.{}",
+        std::process::id() // unique-enough per running daemon; renamed immediately
+    ));
+    tokio::fs::write(&tmp, bytes).await
+        .map_err(|e| anyhow::anyhow!("write {}: {e}", tmp.display()))?;
+    tokio::fs::rename(&tmp, path).await
+        .map_err(|e| anyhow::anyhow!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
 async fn apply_evolution(
     _id:          EvolutionId,
     proposal:     EvolutionProposal,
@@ -768,23 +782,29 @@ async fn apply_evolution(
             Ok(format!("system prompt updated ({} chars)", content.len()))
         }
 
-        EvolutionProposal::UpdatePolicyRule { tool_pattern, new_mode, reason: _ } => {
+        EvolutionProposal::UpdatePolicyRule { tool_pattern, new_rule, reason: _ } => {
             let toml_text = tokio::fs::read_to_string(policy_path).await?;
             let mut doc = toml_text.parse::<toml_edit::DocumentMut>()?;
-            let mode_str = match new_mode {
-                PolicyMode::Suggest  => "suggest",
-                PolicyMode::AutoEdit => "auto-edit",
-                PolicyMode::Yolo     => "yolo",
-            };
-            if let Some(rules) = doc.get_mut("rules").and_then(|v| v.as_table_mut()) {
-                rules.insert(&tool_pattern, toml_edit::value(mode_str));
+            // The [rules] table accepts allow/ask/workspace (PolicyRule), NOT the
+            // global mode names. Writing a mode name here makes policy.toml fail to
+            // deserialize on the next load and silently wipes every rule.
+            let rule_str = new_rule.as_toml_str();
+            // Ensure [rules] exists so brand-new rule additions don't silently no-op.
+            if doc.get("rules").is_none() {
+                doc["rules"] = toml_edit::Item::Table(toml_edit::Table::new());
             }
+            if let Some(rules) = doc.get_mut("rules").and_then(|v| v.as_table_mut()) {
+                rules.insert(&tool_pattern, toml_edit::value(rule_str));
+            }
+            // Validate-before-persist: parse the candidate doc into a PolicyConfig
+            // BEFORE touching the live file, so a bad proposal can never corrupt it.
             let new_toml = doc.to_string();
-            tokio::fs::write(policy_path, &new_toml).await?;
-            let new_config = PolicyConfig::load(policy_path)?;
+            let new_config = PolicyConfig::parse(&new_toml)
+                .map_err(|e| anyhow::anyhow!("rejected policy edit (would corrupt policy.toml): {e}"))?;
+            write_atomic(policy_path, new_toml.as_bytes()).await?;
             *policy_arc.write().await = PolicyEngine::new(new_config);
-            eprintln!("[evolution] policy rule '{tool_pattern}' = '{mode_str}'");
-            Ok(format!("policy rule '{tool_pattern}' set to '{mode_str}'"))
+            eprintln!("[evolution] policy rule '{tool_pattern}' = '{rule_str}'");
+            Ok(format!("policy rule '{tool_pattern}' set to '{rule_str}'"))
         }
 
         EvolutionProposal::RegisterMcpServer { name, command, env, reason: _ } => {
@@ -1208,10 +1228,12 @@ fn propose_evolution_spec() -> ToolSpec {
                     "type":        "string",
                     "description": "Exact tool name or wildcard 'prefix.*' (update_policy_rule)."
                 },
-                "new_mode": {
+                "new_rule": {
                     "type":        "string",
-                    "enum":        ["suggest", "auto-edit", "yolo"],
-                    "description": "New approval mode (update_policy_rule)."
+                    "enum":        ["allow", "ask", "workspace"],
+                    "description": "Per-tool approval rule (update_policy_rule): \
+                                    'allow' never asks, 'ask' always asks, \
+                                    'workspace' auto-approves inside the workspace."
                 },
                 "content": {
                     "type":        "string",

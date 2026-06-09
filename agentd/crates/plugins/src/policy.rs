@@ -51,8 +51,24 @@ impl PolicyConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("cannot read {}: {}", path.display(), e))?;
-        toml::from_str(&text)
+        Self::parse(&text)
+    }
+
+    /// Parse a policy config from a TOML string. Shared by `load` and by the
+    /// evolution applier's validate-before-persist check.
+    pub fn parse(text: &str) -> anyhow::Result<Self> {
+        toml::from_str(text)
             .map_err(|e| anyhow::anyhow!("policy.toml parse error: {}", e))
+    }
+}
+
+impl From<apexos_core::PolicyRule> for Rule {
+    fn from(r: apexos_core::PolicyRule) -> Self {
+        match r {
+            apexos_core::PolicyRule::Allow     => Rule::Allow,
+            apexos_core::PolicyRule::Ask       => Rule::Ask,
+            apexos_core::PolicyRule::Workspace => Rule::Workspace,
+        }
     }
 }
 
@@ -189,6 +205,24 @@ mod tests {
         let cfg = PolicyConfig::default();
         assert_eq!(cfg.mode, PolicyMode::Suggest);
         assert!(cfg.rules.is_empty());
+    }
+
+    #[test]
+    fn policy_rule_toml_strings_are_valid_rule_values() {
+        // Regression: the evolution applier writes PolicyRule::as_toml_str() into
+        // the [rules] table. Every such string MUST deserialize back into a Rule,
+        // or a single update_policy_rule evolution corrupts policy.toml and wipes
+        // all rules on the next load.
+        for pr in [
+            apexos_core::PolicyRule::Allow,
+            apexos_core::PolicyRule::Ask,
+            apexos_core::PolicyRule::Workspace,
+        ] {
+            let toml = format!("[rules]\n\"some.tool\" = \"{}\"\n", pr.as_toml_str());
+            let cfg = PolicyConfig::parse(&toml)
+                .unwrap_or_else(|e| panic!("'{}' must parse as a rule: {e}", pr.as_toml_str()));
+            assert_eq!(cfg.rules["some.tool"], Rule::from(pr));
+        }
     }
 
     #[test]
