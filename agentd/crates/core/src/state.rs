@@ -102,6 +102,11 @@ impl SystemState {
             // A2A: routing handled by the agent router; state is a no-op.
             Event::AgentMessage    { .. } => {}
             Event::AgentMessageAck { .. } => {}
+
+            // Mesh: peer registry managed by gateway; state is a no-op.
+            Event::PeerSeen       { .. } => {}
+            Event::PeerRegistered { .. } => {}
+            Event::PeerLost       { .. } => {}
         }
     }
 

@@ -15,6 +15,7 @@ anyhow       = { workspace = true }
 libc         = "0.2"
 reqwest      = { version = "0.12", features = ["json"] }
 chrono       = { version = "0.4", default-features = false, features = ["clock", "std"] }
+toml         = "0.8"
 
 [dev-dependencies]
 tokio-tungstenite = "0.26"

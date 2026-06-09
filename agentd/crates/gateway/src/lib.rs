@@ -6,8 +6,10 @@ use axum::{
     },
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
+pub mod mesh;
+pub use mesh::{PeerRecord, PeerRegistry, PeerRole};
 use serde::{Deserialize, Serialize};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
@@ -69,6 +71,10 @@ pub struct GatewayState {
     pub council_sessions:  CouncilSessionsMap,
     /// Council: counter for gateway-initiated council IDs (prefix "gw")
     pub council_next_id:   Arc<std::sync::atomic::AtomicU64>,
+    /// Mesh peer registry — peers.toml backed, hot-reloadable
+    pub peer_registry:     Arc<RwLock<PeerRegistry>>,
+    /// Own node_id (hostname) — used by discovery loop to avoid self-bootstrap
+    pub node_id:           Arc<String>,
 }
 
 pub fn router(state: GatewayState) -> Router {
@@ -104,6 +110,9 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/council/{id}",          get(council_detail_handler))
         .route("/api/council/{id}/butt-in",  post(council_butt_in_handler))
         .route("/terminal-ws",            get(terminal_ws_handler))
+        .route("/api/mesh/nodes",         get(mesh_nodes_handler))
+        .route("/api/mesh/peers",         get(mesh_peers_get_handler).post(mesh_peers_post_handler))
+        .route("/api/mesh/peers/{id}",    delete(mesh_peers_delete_handler))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -1370,6 +1379,103 @@ async fn council_butt_in_handler(
         }
         None => (StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "council not active or not found"}))).into_response(),
+    }
+}
+
+// ── Mesh ──────────────────────────────────────────────────────────────────────
+
+/// GET /api/mesh/nodes — run avahi-browse and return discovered _apexos._tcp nodes.
+/// Each entry includes whether the node is already in peers.toml ("known").
+async fn mesh_nodes_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::process::Command::new("avahi-browse")
+            .args(["-rpt", "_apexos._tcp", "--no-db-lookup"])
+            .output(),
+    ).await;
+
+    let raw = match result {
+        Ok(Ok(o)) => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => String::new(),
+    };
+
+    let discovered = mesh::parse_avahi_output(&raw);
+    let registry   = state.peer_registry.read().await;
+    let my_node_id = state.node_id.as_str();
+
+    let nodes: Vec<serde_json::Value> = discovered.into_iter()
+        .filter(|(node_id, _)| node_id != my_node_id)  // don't list self
+        .map(|(node_id, ip)| {
+            let known   = registry.contains(&node_id);
+            let ws_url  = format!("ws://{}:8787/ws", ip);
+            serde_json::json!({
+                "node_id": node_id,
+                "ip":      ip,
+                "ws_url":  ws_url,
+                "known":   known,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({ "nodes": nodes }))
+}
+
+/// GET /api/mesh/peers — list peers.toml contents.
+async fn mesh_peers_get_handler(State(state): State<GatewayState>) -> impl IntoResponse {
+    let registry = state.peer_registry.read().await;
+    Json(serde_json::json!({ "peers": registry.peers }))
+}
+
+/// POST /api/mesh/peers — add or update a peer.
+/// Body: { node_id, ws_url, role? }
+async fn mesh_peers_post_handler(
+    State(state): State<GatewayState>,
+    Json(body):   Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let node_id = match body["node_id"].as_str().filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None    => return Json(serde_json::json!({ "ok": false, "error": "missing node_id" })),
+    };
+    let ws_url = match body["ws_url"].as_str().filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None    => return Json(serde_json::json!({ "ok": false, "error": "missing ws_url" })),
+    };
+    let role = match body["role"].as_str().unwrap_or("full") {
+        "sensor" => PeerRole::Sensor,
+        "thin"   => PeerRole::Thin,
+        _        => PeerRole::Full,
+    };
+    let record = PeerRecord { node_id: node_id.clone(), ws_url: ws_url.clone(), role, status: "online".into() };
+
+    let result = {
+        let mut registry = state.peer_registry.write().await;
+        registry.add(record)
+    };
+
+    match result {
+        Ok(_) => {
+            state.bus.emit(apexos_core::Event::PeerRegistered {
+                node_id, ws_url, role: "full".into(),
+            }).await;
+            Json(serde_json::json!({ "ok": true }))
+        }
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
+/// DELETE /api/mesh/peers/:id — remove a peer by node_id.
+async fn mesh_peers_delete_handler(
+    State(state): State<GatewayState>,
+    Path(id):     Path<String>,
+) -> impl IntoResponse {
+    let result = {
+        let mut registry = state.peer_registry.write().await;
+        registry.remove(&id)
+    };
+    match result {
+        Ok(true)  => Json(serde_json::json!({ "ok": true })),
+        Ok(false) => Json(serde_json::json!({ "ok": false, "error": "peer not found" })),
+        Err(e)    => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
     }
 }
 

@@ -185,6 +185,14 @@ pub enum Event {
 
     Error { session: Option<SessionId>, message: String },
 
+    // ── mesh ──────────────────────────────────────────────
+    /// A new _apexos._tcp node seen via mDNS that isn't in peers.toml yet.
+    PeerSeen       { node_id: String, ip: String },
+    /// A peer was successfully added to peers.toml (bootstrap complete or manual add).
+    PeerRegistered { node_id: String, ws_url: String, role: String },
+    /// A known peer stopped advertising (3 missed mDNS polls).
+    PeerLost       { node_id: String },
+
     // self-evolution
     /// Agent has proposed a structural change. Routes through the policy engine
     /// under the `evolution.*` rule namespace (default: suggest -> ask user).

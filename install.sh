@@ -338,6 +338,19 @@ for svc in agentd.service cerebro-api.service; do
 done
 ok "Config files, UI, and services installed"
 
+# ── Mesh: Avahi mDNS advertisement ────────────────────────────────────────────
+hdr "Mesh discovery (mDNS)"
+apt-get install -y -q avahi-daemon avahi-utils
+# Service advertisement file — announces _apexos._tcp on port 8787
+install -m 644 "$REPO_DIR/deploy/apexos.avahi.service" /etc/avahi/services/apexos.service
+systemctl enable --now avahi-daemon
+# Empty peers.toml if not already present (agentd will manage it at runtime)
+if [[ ! -f /etc/agentd/peers.toml ]]; then
+  echo "# ApexOS mesh peers" > /etc/agentd/peers.toml
+  chown agentd:agentd /etc/agentd/peers.toml
+fi
+ok "Avahi advertising _apexos._tcp · peers.toml ready"
+
 # ── Cage kiosk ─────────────────────────────────────────────────────────────────
 if $DO_KIOSK; then
   hdr "Cage Wayland kiosk"

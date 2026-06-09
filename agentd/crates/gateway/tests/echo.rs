@@ -34,6 +34,10 @@ fn make_state(handle: apexos_core::BusHandle, bcast: tokio::sync::broadcast::Sen
         council_butt_in:      Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         council_sessions:     Arc::new(tokio::sync::Mutex::new(Vec::new())),
         council_next_id:      Arc::new(AtomicU64::new(1)),
+        peer_registry:        Arc::new(tokio::sync::RwLock::new(
+            apexos_gateway::PeerRegistry::load(std::path::Path::new("/dev/null"))
+        )),
+        node_id:              Arc::new("test-node".into()),
     }
 }
 

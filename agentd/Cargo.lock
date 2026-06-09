@@ -69,6 +69,7 @@ dependencies = [
  "apexos-core",
  "apexos-plugins",
  "axum",
+ "chrono",
  "futures-util",
  "libc",
  "reqwest",
@@ -76,6 +77,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "toml",
  "tungstenite 0.26.2",
 ]
 
@@ -85,6 +87,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apexos-core",
+ "chrono",
  "serde",
  "serde_json",
  "tokio",

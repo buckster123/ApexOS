@@ -9,7 +9,7 @@ use apexos_core::{
     ActionId, Bus, ContentBlock, Event, EvolutionId, EvolutionProposal, Message,
     PluginId, PolicyMode, SessionId, SensorReading, Subsystem, SystemState, ToolOutput, ToolSpec,
 };
-use apexos_gateway::{serve, GatewayState};
+use apexos_gateway::{serve, GatewayState, PeerRegistry};
 use apexos_plugins::{
     load as load_plugins, PluginConfig, PolicyConfig, PolicyEngine, RestartPolicy,
     Supervisor, SupervisorCmd, ToolProxy,
@@ -177,6 +177,26 @@ async fn main() -> anyhow::Result<()> {
     let (council_tx, council_rx) = mpsc::channel::<(SessionId, ActionId, serde_json::Value)>(8);
     let council_start_tx  = council_tx.clone();
 
+    // Peer registry — /etc/agentd/peers.toml (created empty if missing)
+    let peers_path = PathBuf::from(
+        std::env::var("PEERS_TOML").unwrap_or_else(|_| "/etc/agentd/peers.toml".into())
+    );
+    if !peers_path.exists() {
+        let _ = std::fs::write(&peers_path, "# ApexOS mesh peers\n");
+    }
+    let peer_registry = Arc::new(RwLock::new(PeerRegistry::load(&peers_path)));
+    let node_id = Arc::new(
+        std::env::var("APEX_NODE_ID").unwrap_or_else(|_| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "apexos".into())
+        })
+    );
+
     eprintln!("[agentd] serving UI from {}", ui_dir.display());
     let gw_state = GatewayState {
         bus:                  handle.clone(),
@@ -200,6 +220,8 @@ async fn main() -> anyhow::Result<()> {
         council_butt_in:      Arc::clone(&council_butt_in),
         council_sessions:     Arc::clone(&council_sessions),
         council_next_id:      Arc::clone(&council_next_id),
+        peer_registry:        Arc::clone(&peer_registry),
+        node_id:              Arc::clone(&node_id),
     };
     let gw_addr: std::net::SocketAddr = "0.0.0.0:8787".parse()?;
     tokio::spawn(async move {

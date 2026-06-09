@@ -1,0 +1,17 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  ApexOS mDNS service advertisement.
+  Deployed to /etc/avahi/services/apexos.service by install.sh.
+  Allows other ApexOS nodes on the LAN to discover this node via
+  avahi-browse -rpt _apexos._tcp
+-->
+<service-group>
+  <name replace-wildcards="yes">ApexOS %h</name>
+  <service>
+    <type>_apexos._tcp</type>
+    <port>8787</port>
+    <txt-record>node_id=%h</txt-record>
+    <txt-record>version=1</txt-record>
+  </service>
+</service-group>
