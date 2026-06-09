@@ -153,6 +153,11 @@ const WIN_DEFAULTS = {
     x: 60, y: 50, width: 860, height: 560,
     background: 'var(--wb-bg)',
   },
+  eventlog: {
+    title: '📜 Event Log',
+    x: 80, y: 60, width: 820, height: 540,
+    background: 'var(--wb-bg)',
+  },
 };
 
 // ─── Taskbar tab management ───────────────────────────────────────────────────
@@ -231,6 +236,7 @@ function openWin(id) {
   if (id === 'ide')       setTimeout(ideInit, 60);
   if (id === 'player')    setTimeout(playerInit, 30);
   if (id === 'home')      setTimeout(homeInit, 30);
+  if (id === 'eventlog')  setTimeout(eventlogInit, 30);
 
   const cfg = WIN_DEFAULTS[id] || { title: id, x: 100, y: 80, width: 600, height: 400 };
   wins[id] = new WinBox(cfg.title, {
@@ -239,7 +245,8 @@ function openWin(id) {
     mount: content,
     onclose() {
       content.style.display = 'none';
-      if (id === 'home') homeStop();
+      if (id === 'home')     homeStop();
+      if (id === 'eventlog') eventlogStop();
       delete wins[id];
       removeTaskbarTab(id);
       return false;
@@ -1850,3 +1857,205 @@ window.councilButtIn = async function(cid) {
     if (!d.ok) console.warn('[council] butt-in error:', d.error);
   } catch(e) { console.error('[council] butt-in failed:', e); }
 };
+
+// ─── Event Log Timeline ───────────────────────────────────────────────────────
+
+var _elAutoTimer = null;
+
+const EL_BADGE = {
+  user_prompt:            { label: 'QUERY',  color: '#39ff14' },
+  tool_requested:         { label: 'TOOL',   color: '#4fc3f7' },
+  approval_pending:       { label: 'APPRVL', color: '#ffd700' },
+  user_approval:          { label: 'APPRV',  color: '#ffd700' },
+  evolution_proposed:     { label: 'EVO',    color: '#e8b4ff' },
+  evolution_applied:      { label: 'EVO+',   color: '#9b59b6' },
+  evolution_rolled_back:  { label: 'ROLLBK', color: '#e74c3c' },
+  plugin_up:              { label: 'PLUG+',  color: '#2ecc71' },
+  plugin_down:            { label: 'PLUG-',  color: '#e74c3c' },
+  wake_triggered:         { label: 'WAKE',   color: '#ffb300' },
+  spawn_agent:            { label: 'SPAWN',  color: '#4fc3f7' },
+  sub_agent_started:      { label: 'AGENT',  color: '#4fc3f7' },
+  agent_message:          { label: 'A2A',    color: '#3498db' },
+  agent_message_ack:      { label: 'A2AACK', color: '#3498db' },
+  council_started:        { label: 'CNCL',   color: '#ffd700' },
+  council_complete:       { label: 'CNCL+',  color: '#ffd700' },
+  sensor_reading:         { label: 'SENSOR', color: '#ff9800' },
+  error:                  { label: 'ERR',    color: '#e74c3c' },
+};
+
+function elFormatEvent(ev) {
+  const t = ev.type || 'unknown';
+  const badge = EL_BADGE[t] || { label: t.toUpperCase().replace(/_/g,' ').slice(0,7), color: '#666' };
+
+  let msg = '';
+  switch (t) {
+    case 'user_prompt':
+      msg = ev.text ? String(ev.text).slice(0, 160) : '';
+      break;
+    case 'tool_requested':
+      if (ev.call) {
+        const args = ev.call.args ? JSON.stringify(ev.call.args).slice(0, 100) : '';
+        msg = (ev.call.tool || '?') + ': ' + args;
+      }
+      break;
+    case 'approval_pending':
+      msg = 'approval needed: ' + (ev.call && ev.call.tool ? ev.call.tool : ev.call_id || '?');
+      break;
+    case 'user_approval':
+      msg = (ev.approved ? '✓ approved' : '✗ denied') + (ev.call_id ? ' call ' + ev.call_id : '');
+      break;
+    case 'evolution_proposed':
+      msg = 'proposed: ' + (ev.proposal ? (ev.proposal.kind || JSON.stringify(ev.proposal).slice(0,80)) : '?');
+      break;
+    case 'evolution_applied':
+      msg = ev.patch_summary || (ev.proposal ? ev.proposal.kind : '?');
+      break;
+    case 'evolution_rolled_back':
+      msg = 'reason: ' + (ev.reason || '?');
+      break;
+    case 'plugin_up':
+      msg = String(ev.plugin || '?') + ' — ' + (ev.tools ? ev.tools.length + ' tools' : 'up');
+      break;
+    case 'plugin_down':
+      msg = String(ev.plugin || '?') + (ev.reason ? ' — ' + ev.reason : '');
+      break;
+    case 'wake_triggered':
+      msg = ev.transcript ? '"' + String(ev.transcript).slice(0,80) + '"' : 'wake word';
+      break;
+    case 'spawn_agent':
+      msg = String(ev.prompt || '?').slice(0, 120);
+      break;
+    case 'sub_agent_started':
+      msg = 'child session ' + (ev.child !== undefined ? ev.child : '?') + ': ' + String(ev.prompt || '').slice(0, 80);
+      break;
+    case 'agent_message':
+      msg = 'session ' + ev.from + ' → ' + ev.to + ': ' + String(ev.body || '').slice(0, 80);
+      break;
+    case 'council_started':
+      msg = 'agents: ' + (Array.isArray(ev.agents) ? ev.agents.map(function(a){ return a.id||a; }).join(', ') : '?');
+      break;
+    case 'council_complete':
+      msg = ev.synthesis ? String(ev.synthesis).slice(0, 120) : 'complete';
+      break;
+    case 'sensor_reading':
+      msg = elFormatSensor(ev);
+      break;
+    case 'error':
+      msg = String(ev.message || '?').slice(0, 120);
+      break;
+    default:
+      msg = JSON.stringify(ev).slice(0, 120);
+  }
+
+  const ts = ev.timestamp ? new Date(ev.timestamp * 1000).toLocaleTimeString() : '';
+  return { badge: badge, msg: msg, ts: ts };
+}
+
+function elFormatSensor(ev) {
+  const r = ev.reading || {};
+  const k = r.kind || '';
+  const node = ev.node_id || '';
+  switch (k) {
+    case 'air_quality':
+      return node + ' IAQ ' + (r.iaq !== undefined ? r.iaq.toFixed(0) : '?') +
+             '/acc' + (r.accuracy !== undefined ? r.accuracy : '?') +
+             ' T:' + (r.temperature_c !== undefined ? r.temperature_c.toFixed(1) : '?') + '°C' +
+             ' RH:' + (r.humidity_pct !== undefined ? r.humidity_pct.toFixed(0) : '?') + '%';
+    case 'thermal_frame':
+      return node + ' thermal min:' + (r.min_c !== undefined ? r.min_c.toFixed(1) : '?') +
+             ' mean:' + (r.mean_c !== undefined ? r.mean_c.toFixed(1) : '?') +
+             ' max:' + (r.max_c !== undefined ? r.max_c.toFixed(1) : '?') + '°C';
+    case 'temperature':
+      return node + ' ' + (r.sensor_id || 'cpu') + ': ' + (r.celsius !== undefined ? r.celsius.toFixed(1) : '?') + '°C';
+    case 'motion':
+      return node + ' ' + (r.sensor_id || '') + ': motion ' + (r.detected ? 'detected' : 'clear');
+    default:
+      return node + ' ' + k + ': ' + JSON.stringify(r).slice(0, 80);
+  }
+}
+
+function eventlogInit() {
+  eventlogRefresh();
+}
+
+function eventlogStop() {
+  if (_elAutoTimer) { clearInterval(_elAutoTimer); _elAutoTimer = null; }
+  const cb = document.getElementById('el-auto');
+  if (cb) cb.checked = false;
+}
+
+function eventlogAutoToggle(on) {
+  if (_elAutoTimer) { clearInterval(_elAutoTimer); _elAutoTimer = null; }
+  if (on) _elAutoTimer = setInterval(eventlogRefresh, 30000);
+}
+
+async function eventlogRefresh() {
+  const hoursEl = document.getElementById('el-hours');
+  const typeEl  = document.getElementById('el-type');
+  const countEl = document.getElementById('el-count');
+  const listEl  = document.getElementById('el-events');
+  const btn     = document.getElementById('el-refresh-btn');
+  if (!listEl) return;
+
+  const hours = hoursEl ? hoursEl.value : '24';
+  const types = typeEl  ? typeEl.value  : '';
+
+  if (btn) btn.disabled = true;
+  if (countEl) countEl.textContent = '…';
+
+  let events = [];
+  try {
+    let url = '/api/events/recent?hours=' + hours + '&max=500';
+    if (types) url += '&types=' + encodeURIComponent(types);
+    const r = await fetch(url);
+    if (r.ok) events = await r.json();
+  } catch(e) {
+    if (countEl) countEl.textContent = 'error';
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  // Newest first
+  events = events.slice().reverse();
+
+  if (countEl) countEl.textContent = events.length + ' event' + (events.length !== 1 ? 's' : '');
+
+  listEl.innerHTML = '';
+  if (events.length === 0) {
+    listEl.innerHTML = '<div class="el-empty">No events in the last ' + hours + 'h</div>';
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  events.forEach(function(ev) {
+    const fmt = elFormatEvent(ev);
+    const row = document.createElement('div');
+    row.className = 'el-row';
+
+    const badge = document.createElement('span');
+    badge.className = 'el-badge';
+    badge.textContent = fmt.badge.label;
+    badge.style.color = fmt.badge.color;
+    badge.style.borderColor = fmt.badge.color + '44';
+
+    const msg = document.createElement('span');
+    msg.className = 'el-msg';
+    msg.textContent = fmt.msg;
+
+    row.appendChild(badge);
+    row.appendChild(msg);
+
+    if (fmt.ts) {
+      const ts = document.createElement('span');
+      ts.className = 'el-ts';
+      ts.textContent = fmt.ts;
+      row.appendChild(ts);
+    }
+
+    frag.appendChild(row);
+  });
+  listEl.appendChild(frag);
+
+  if (btn) btn.disabled = false;
+}

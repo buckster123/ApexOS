@@ -106,6 +106,7 @@
       <button class="sm-item" onclick="launchApp('ide')"><span class="sm-emoji">🖥</span>IDE</button>
       <button class="sm-item" onclick="launchApp('player')"><span class="sm-emoji">🎵</span>Player</button>
       <button class="sm-item" onclick="launchApp('council')"><span class="sm-emoji">⚗</span>Council</button>
+      <button class="sm-item" onclick="launchApp('eventlog')"><span class="sm-emoji">📜</span>Event Log</button>
     </div>
     <div class="sm-pane sm-right">
       <button class="sm-item" onclick="launchApp('settings')"><span class="sm-emoji">⚙</span>Settings</button>
@@ -233,6 +234,36 @@
         <button class="player-btn player-refresh-btn" onclick="playerRefresh()" title="Refresh">↺</button>
       </div>
     </div>
+  </div>
+
+  <!-- Event Log window -->
+  <div id="win-eventlog-content" class="win-content eventlog-win" style="display:none">
+    <div class="el-toolbar">
+      <select id="el-hours" class="el-select" title="Time range">
+        <option value="1">1h</option>
+        <option value="6">6h</option>
+        <option value="24" selected>24h</option>
+        <option value="48">48h</option>
+        <option value="168">7d</option>
+      </select>
+      <select id="el-type" class="el-select" title="Event type filter">
+        <option value="">All</option>
+        <option value="user_prompt">User prompts</option>
+        <option value="sensor_reading">Sensor</option>
+        <option value="evolution_applied,evolution_proposed,evolution_rolled_back">Evolution</option>
+        <option value="tool_requested,approval_pending,user_approval">Tools</option>
+        <option value="plugin_up,plugin_down">Plugins</option>
+        <option value="spawn_agent,sub_agent_started,agent_message">Agents</option>
+        <option value="wake_triggered">Wake</option>
+        <option value="council_started,council_complete">Council</option>
+      </select>
+      <button class="el-btn" id="el-refresh-btn" onclick="eventlogRefresh()">↺ Refresh</button>
+      <label class="el-auto-label" title="Auto-refresh every 30s">
+        <input type="checkbox" id="el-auto" onchange="eventlogAutoToggle(this.checked)"> Auto
+      </label>
+      <span id="el-count" class="el-count"></span>
+    </div>
+    <div id="el-events" class="el-events"></div>
   </div>
 
   <!-- Sub-agent windows spawned dynamically by openSubAgentWin() -->
