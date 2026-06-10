@@ -217,15 +217,25 @@ function handleEvent(ev) {
         }
         const body = toolEl.querySelector('.tool-body');
         if (body) {
-          const resultEl = document.createElement('div');
-          resultEl.className = `tool-result${ev.output.ok ? '' : ' err'}`;
           const content = ev.output.content;
           const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+          const hdr = toolEl.querySelector('.tool-header');
+          const tog = toolEl.querySelector('.tool-toggle');
+          if (hdr && tog) {
+            const preview = document.createElement('span');
+            preview.className = 'tool-result-preview';
+            const firstLine = text.split('\n').find(l => l.trim()) || '';
+            preview.textContent = firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine;
+            hdr.insertBefore(preview, tog);
+          }
+          const resultEl = document.createElement('div');
+          resultEl.className = `tool-result${ev.output.ok ? '' : ' err'}`;
           resultEl.textContent = text.length > 400 ? text.slice(0, 400) + '\n…' : text;
           body.appendChild(resultEl);
-          body.classList.add('open');
-          const toggle = toolEl.querySelector('.tool-toggle');
-          if (toggle) toggle.textContent = '▾';
+          if (!ev.output.ok) {
+            body.classList.add('open');
+            if (tog) tog.textContent = '▾';
+          }
         }
       }
       outputEl.scrollTop = outputEl.scrollHeight;
@@ -235,9 +245,12 @@ function handleEvent(ev) {
       const block = document.createElement('div');
       block.className = 'approval-block';
       const argsStr = JSON.stringify(ev.call.input, null, 2);
+      const sum = toolSummary(ev.call.tool, ev.call.input);
       block.innerHTML =
-        `<div class="approval-label">⚠ APPROVAL: <strong>${esc(ev.call.tool)}</strong></div>` +
-        `<div class="approval-args">${esc(argsStr)}</div>`;
+        `<div class="approval-label">⚠ APPROVAL: <strong>${esc(ev.call.tool)}</strong>` +
+        (sum ? ` <span class="tool-summary">${esc(sum)}</span>` : '') +
+        `</div>` +
+        `<details class="approval-detail"><summary>args</summary><div class="approval-args">${esc(argsStr)}</div></details>`;
       const btns = document.createElement('div');
       btns.className = 'approval-btns';
       const approve = document.createElement('button');
@@ -353,6 +366,64 @@ function onTurnComplete() {
   if (typeof window._voiceOnAgentDone === 'function') window._voiceOnAgentDone();
 }
 
+// ─── Tool summary (one-liner shown in header without expanding) ───────────────
+function toolSummary(name, input) {
+  if (!input || typeof input !== 'object') return '';
+  const i = input;
+  const s = (v, n = 55) => v ? String(v).trim().slice(0, n) : '';
+  const base = name.includes('__') ? name.split('__').pop() : name;
+  switch (base) {
+    case 'run_command':    return s(i.command, 70);
+    case 'read_file':      return s(i.path || i.file_path);
+    case 'write_file':     return s(i.path || i.file_path);
+    case 'list_dir':       return s(i.path || i.directory || i.dir);
+    case 'create_dir':     return s(i.path);
+    case 'delete_path':    return s(i.path);
+    case 'http_fetch':     return s(i.url, 70);
+    case 'memory_search':
+    case 'recall':         return i.query ? `"${s(i.query)}"` : '';
+    case 'memory_store':
+    case 'remember':       return s(i.content || i.memory);
+    case 'store_intention':return s(i.title || i.content);
+    case 'find_relevant_procedures': return i.query ? `"${s(i.query)}"` : '';
+    case 'session_save':   return s(i.title || i.summary);
+    case 'get_memory':
+    case 'update_memory':  return s(i.memory_id);
+    case 'agent_spawn':    return s(i.task || i.prompt);
+    case 'send_to_agent':  return s(i.message);
+    case 'convene_council':return s(i.topic);
+    case 'bootstrap_node': return s(i.host || i.ip);
+    case 'schedule_task':  return s(i.cron ? `${i.cron} — ${i.task || ''}` : i.task);
+    case 'cancel_schedule':return s(i.id);
+    case 'notify':         return s(i.message);
+    case 'propose_evolution': return s(i.description || i.summary);
+    case 'disk_usage':     return s(i.path);
+    case 'audio_analyze':
+    case 'audio_trim_silence':
+    case 'audio_normalize':
+    case 'audio_peak_limit':
+    case 'audio_trim':     return s((i.path || i.input || '').split('/').pop());
+    case 'audio_clean':    return s((i.input || '').split('/').pop());
+    case 'gpio_read':      return i.pin != null ? `GPIO${i.pin}` : '';
+    case 'gpio_write':     return i.pin != null ? `GPIO${i.pin} → ${i.value}` : '';
+    case 'gpio_pulse':     return i.pin != null ? `GPIO${i.pin} ${i.duration_ms}ms` : '';
+    case 'gpio_pwm':       return i.pin != null ? `GPIO${i.pin} duty=${i.duty_cycle}%` : '';
+    case 'gpio_servo':     return i.pin != null ? `GPIO${i.pin} angle=${i.angle}°` : '';
+    case 'display_face':   return s(i.state);
+    case 'generate_song':  return [i.title, i.style].filter(Boolean).map(v => s(v, 28)).join(' · ');
+    case 'check_status':   return s(i.job_id || i.id);
+    case 'download_track': return s(i.track_id || i.job_id || i.id);
+    case 'extend_track':   return s(i.track_id || i.id);
+    case 'vast_launch':    return s(i.recipe);
+    case 'vast_destroy':   return s(i.instance_id);
+    case 'query_event_log':return i.hours ? `last ${i.hours}h` : '';
+    default: {
+      const v = i.query || i.message || i.command || i.path || i.name || i.title || i.url;
+      return v ? s(String(v)) : '';
+    }
+  }
+}
+
 // ─── Tool calls ───────────────────────────────────────────────────────────────
 function onToolRequested(ev) {
   const t   = ensureActiveTurn();
@@ -370,10 +441,12 @@ function makeToolCallEl(callId, toolName, input) {
   header.className = 'tool-header';
 
   const argsStr = JSON.stringify(input, null, 2);
+  const summary = toolSummary(toolName, input);
 
   header.innerHTML =
     `<span class="tool-tag">TOOL</span>` +
     `<span class="tool-name">${esc(toolName)}</span>` +
+    (summary ? `<span class="tool-summary">${esc(summary)}</span>` : '') +
     `<span class="tool-status" data-status="pending">◌</span>` +
     `<span class="tool-toggle">▸</span>`;
 
@@ -408,16 +481,30 @@ function onToolResult(ev) {
   const body = callEl.querySelector('.tool-body');
   if (!body) return;
 
-  const resultEl = document.createElement('div');
-  resultEl.className = `tool-result${ev.output.ok ? '' : ' err'}`;
   const content = ev.output.content;
   const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+
+  // Result preview: first non-empty line shown in header without expanding
+  const header = callEl.querySelector('.tool-header');
+  const toggle = callEl.querySelector('.tool-toggle');
+  if (header && toggle) {
+    const preview = document.createElement('span');
+    preview.className = 'tool-result-preview';
+    const firstLine = text.split('\n').find(l => l.trim()) || '';
+    preview.textContent = firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine;
+    header.insertBefore(preview, toggle);
+  }
+
+  const resultEl = document.createElement('div');
+  resultEl.className = `tool-result${ev.output.ok ? '' : ' err'}`;
   resultEl.textContent = text.length > 400 ? text.slice(0, 400) + '\n…' : text;
   body.appendChild(resultEl);
 
-  body.classList.add('open');
-  const toggle = callEl.querySelector('.tool-toggle');
-  if (toggle) toggle.textContent = '▾';
+  // Auto-open only on error; success is summarised in the header
+  if (!ev.output.ok) {
+    body.classList.add('open');
+    if (toggle) toggle.textContent = '▾';
+  }
 
   scrollDown();
 }
@@ -428,9 +515,12 @@ function onApprovalPending(ev) {
   block.className = 'approval-block';
 
   const argsStr = JSON.stringify(ev.call.input, null, 2);
+  const summary = toolSummary(ev.call.tool, ev.call.input);
   block.innerHTML =
-    `<div class="approval-label">⚠  APPROVAL REQUIRED: <strong>${esc(ev.call.tool)}</strong></div>` +
-    `<div class="approval-args">${esc(argsStr)}</div>`;
+    `<div class="approval-label">⚠  APPROVAL REQUIRED: <strong>${esc(ev.call.tool)}</strong>` +
+    (summary ? ` <span class="tool-summary">${esc(summary)}</span>` : '') +
+    `</div>` +
+    `<details class="approval-detail"><summary>args</summary><div class="approval-args">${esc(argsStr)}</div></details>`;
 
   const btns    = document.createElement('div');
   btns.className = 'approval-btns';

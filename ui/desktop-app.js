@@ -2142,8 +2142,10 @@ function elFormatEvent(ev) {
       break;
     case 'tool_requested':
       if (ev.call) {
-        const args = ev.call.args ? JSON.stringify(ev.call.args).slice(0, 100) : '';
-        msg = (ev.call.tool || '?') + ': ' + args;
+        const sum = (typeof toolSummary === 'function')
+          ? toolSummary(ev.call.tool || '', ev.call.input || ev.call.args || {})
+          : '';
+        msg = (ev.call.tool || '?') + (sum ? ': ' + sum : '');
       }
       break;
     case 'approval_pending':

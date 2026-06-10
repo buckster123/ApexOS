@@ -365,6 +365,29 @@ html, body {
 .tool-status.ok  { color: var(--accent); }
 .tool-status.err { color: var(--error); }
 
+.tool-summary {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: normal;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+  flex-shrink: 1;
+}
+
+.tool-result-preview {
+  color: #7ec8a0;
+  font-size: 10px;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  flex-shrink: 1;
+}
+
 .tool-toggle {
   margin-left: auto;
   font-size: 10px;
@@ -410,10 +433,24 @@ html, body {
 
 .approval-label {
   color: var(--tool-fg);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   letter-spacing: 0.04em;
 }
 .approval-label strong { color: #ffd080; }
+.approval-label .tool-summary { color: var(--fg-dim); font-size: 11px; opacity: 0.8; }
+
+.approval-detail {
+  margin-bottom: 6px;
+}
+.approval-detail > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--fg-dim);
+  user-select: none;
+  list-style: none;
+}
+.approval-detail > summary::before { content: '▸ '; }
+.approval-detail[open] > summary::before { content: '▾ '; }
 
 .approval-args {
   color: var(--fg-dim);
